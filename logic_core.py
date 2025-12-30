@@ -191,6 +191,174 @@ def find_compact_cluster(rows, cols, mask, count):
     return cluster
 
 
+# ============================================================
+# SMART SORT HELPERS (Target-Aware)
+# ============================================================
+
+def get_rectangle_shapes(count):
+    """
+    Get all possible rectangle shapes for 'count' blocks.
+    Example: 4 → [(1,4), (2,2), (4,1)]
+    Sorted by compactness (square-ish first)
+    """
+    shapes = []
+    for r_s in range(1, count + 1):
+        if count % r_s == 0:
+            c_s = count // r_s
+            shapes.append((r_s, c_s))
+
+    # Sort by compactness (minimize aspect ratio difference)
+    shapes.sort(key=lambda s: abs(s[0] - s[1]))
+    return shapes
+
+
+def calculate_placement_score(slots, color, target_grid, rect_rows, rect_cols):
+    """
+    Score a placement option for smart sorting.
+
+    Higher score = better placement
+
+    Scoring:
+    - Conflict penalty: -10 per block matching target below
+    - Compactness bonus: +5 square, +3 good rect, +1 thin
+    - Edge penalty: -2 per edge cell
+
+    Args:
+        slots: List of (r, c) positions
+        color: Block color being placed
+        target_grid: Target grid to avoid matching
+        rect_rows, rect_cols: Rectangle dimensions
+
+    Returns:
+        int: score (higher is better)
+    """
+    score = 0
+
+    # 1. Conflict Penalty (MOST IMPORTANT)
+    conflicts = 0
+    for r, c in slots:
+        if target_grid[r][c] == color:
+            conflicts += 1
+
+    score -= conflicts * 10  # Heavy penalty
+
+    # 2. Compactness Bonus
+    if rect_rows == rect_cols:
+        score += 5  # Perfect square
+    else:
+        aspect_ratio = max(rect_rows, rect_cols) / min(rect_rows, rect_cols)
+        if aspect_ratio <= 2.0:
+            score += 3  # Good rectangle
+        else:
+            score += 1  # Long/thin
+
+    # 3. Edge Penalty (prefer center)
+    rows = len(target_grid)
+    cols = len(target_grid[0]) if rows > 0 else 0
+    for r, c in slots:
+        if r == 0 or c == 0 or r == rows - 1 or c == cols - 1:
+            score -= 2
+
+    return score
+
+
+def find_scattered_placement_smart(rows, cols, mask, count, color, target_grid):
+    """
+    Fallback: Place blocks scattered when no good rectangle exists.
+    Prioritizes positions that DON'T match target.
+
+    Args:
+        rows, cols: Grid dimensions
+        mask: Set of occupied (r, c) positions
+        count: Number of blocks to place
+        color: Block color
+        target_grid: Target grid to avoid
+
+    Returns:
+        List of (r, c) positions (best available)
+    """
+    # Collect all available positions with conflict info
+    available = []
+    for r in range(rows):
+        for c in range(cols):
+            if (r, c) not in mask:
+                conflict = (target_grid[r][c] == color)
+                available.append({
+                    'pos': (r, c),
+                    'conflict': conflict
+                })
+
+    # Sort: non-conflict positions first, then random
+    import random
+    available.sort(key=lambda x: (x['conflict'], random.random()))
+
+    # Take first 'count' positions
+    return [x['pos'] for x in available[:count]]
+
+
+def find_best_placement_smart(rows, cols, mask, count, color, target_grid):
+    """
+    Find best placement for 'count' blocks of 'color' considering target conflicts.
+
+    Tries all possible rectangle shapes at all positions, scores each,
+    returns best scored placement.
+
+    Args:
+        rows, cols: Grid dimensions
+        mask: Set of occupied (r, c) positions
+        count: Number of blocks to place
+        color: Block color
+        target_grid: Target grid to avoid matching
+
+    Returns:
+        List of (r, c) positions with best score
+    """
+    shapes = get_rectangle_shapes(count)
+
+    best_score = -999999
+    best_slots = []
+
+    for r_s, c_s in shapes:
+        if r_s > rows or c_s > cols:
+            continue
+
+        # Try all positions for this shape
+        for r in range(rows - r_s + 1):
+            for c in range(cols - c_s + 1):
+                slots = []
+                valid = True
+
+                # Check if rectangle fits (all cells empty)
+                for ir in range(r, r + r_s):
+                    for ic in range(c, c + c_s):
+                        if (ir, ic) in mask:
+                            valid = False
+                            break
+                        slots.append((ir, ic))
+                    if not valid:
+                        break
+
+                if not valid:
+                    continue
+
+                # Calculate score for this placement
+                score = calculate_placement_score(
+                    slots, color, target_grid, r_s, c_s
+                )
+
+                if score > best_score:
+                    best_score = score
+                    best_slots = slots
+
+    # Fallback: If no good rectangle, use scattered placement
+    if not best_slots:
+        best_slots = find_scattered_placement_smart(
+            rows, cols, mask, count, color, target_grid
+        )
+
+    return best_slots
+
+
 def generate_cluster_pattern(rows, cols, max_types):
     total = rows * cols
     cells = [None] * total
@@ -256,6 +424,68 @@ def sort_grid_data_optimized(rows, cols, data_source):
         # Better: Re-collect what's missing
         # Just loop mask inverse
         pass
+
+    return new_grid
+
+
+def sort_grid_data_smart(rows, cols, cells_grid, target_grid):
+    """
+    Smart sorting that avoids matching target colors below blocks
+    while maintaining aesthetic compact layout.
+
+    Algorithm:
+    1. Collect all blocks and count each color
+    2. Sort colors by strategic priority (hard-to-place first)
+    3. For each color, find best placement using conflict scoring
+    4. Avoid placing blocks same color as targets below
+
+    Args:
+        rows, cols: Grid dimensions
+        cells_grid: Current cells grid (blocks to sort)
+        target_grid: Target grid (to avoid matching)
+
+    Returns:
+        2D grid with smart sorted blocks
+    """
+    # STEP 1: Collect items
+    items = [x for row in cells_grid for x in row if x is not None]
+    if not items:
+        return cells_grid
+
+    counts = {x: items.count(x) for x in set(items)}
+
+    # STEP 2: Sort colors by strategic priority
+    # Priority: Colors with fewer safe placement options go first
+    def get_safe_positions(color):
+        """Count positions where color doesn't match target"""
+        safe = 0
+        for r in range(rows):
+            for c in range(cols):
+                if target_grid[r][c] != color:
+                    safe += 1
+        return safe
+
+    # Sort by: (safe_positions / count) ratio
+    # Low ratio = hard to place safely → do first
+    unique_items = list(set(items))
+    unique_items.sort(key=lambda x: get_safe_positions(x) / counts[x])
+
+    # STEP 3: Greedy placement with conflict scoring
+    new_grid = [[None] * cols for _ in range(rows)]
+    mask = set()
+
+    for val in unique_items:
+        cnt = counts[val]
+
+        # Find best placement for this color
+        best_placement = find_best_placement_smart(
+            rows, cols, mask, cnt, val, target_grid
+        )
+
+        # Place blocks
+        for r, c in best_placement:
+            new_grid[r][c] = val
+            mask.add((r, c))
 
     return new_grid
 
@@ -350,7 +580,8 @@ def sort_selected_trays(trays_to_sort):
             if any(x is not None for x in row): has_block = True
 
         if has_block:
-            ct.cells = sort_grid_data_optimized(ct.rows, ct.cols, ct.cells)
+            # Use smart sort that avoids matching target colors below
+            ct.cells = sort_grid_data_smart(ct.rows, ct.cols, ct.cells, ct.target)
         count += 1
 
     state.last_action_message = f"Sorted {count} trays (Merged {merges})"
