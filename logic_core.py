@@ -573,33 +573,107 @@ def fill_same():
 
 
 def shuffle_level():
+    """
+    Shuffle blocks between containers with accurate ratio control.
+
+    Algorithm:
+    1. Pre-calculate all valid swap pairs
+    2. Separate into same-layer and cross-layer
+    3. Select pairs according to shuffle_ratio
+    4. Execute swaps (prevent double-swap)
+    """
     targets = state.selected_trays if state.selected_trays else state.containers
+
+    # STEP 1: Collect all filled slots
     slots = []
     for ct in targets:
         if not ct.cells: continue
         for r in range(ct.rows):
             for c in range(ct.cols):
-                if ct.cells[r][c] is not None: slots.append({'ct': ct, 'r': r, 'c': c})
-    if len(slots) < 2: return
-    random.shuffle(slots)
-    cnt = 0
-    for a in slots:
-        diff = random.randint(0, 100) < state.shuffle_ratio
-        cands = []
-        for b in slots:
-            if a['ct'] == b['ct'] and a['r'] == b['r'] and a['c'] == b['c']: continue
-            if (a['ct'].layer != b['ct'].layer) != diff: continue
+                if ct.cells[r][c] is not None:
+                    slots.append({'ct': ct, 'r': r, 'c': c, 'id': id((ct, r, c))})
+
+    if len(slots) < 2:
+        state.last_action_message = "Shuffle: Not enough blocks"
+        return
+
+    # STEP 2: Pre-calculate all valid swap pairs
+    same_layer_pairs = []
+    cross_layer_pairs = []
+
+    for i, a in enumerate(slots):
+        for j in range(i + 1, len(slots)):  # j > i để tránh duplicate
+            b = slots[j]
+
+            # Check if valid swap
             va = a['ct'].cells[a['r']][a['c']]
             vb = b['ct'].cells[b['r']][b['c']]
             ta = a['ct'].target[a['r']][a['c']]
             tb = b['ct'].target[b['r']][b['c']]
-            if va != tb and vb != ta: cands.append(b)
-        if cands:
-            b = random.choice(cands)
-            v1, v2 = a['ct'].cells[a['r']][a['c']], b['ct'].cells[b['r']][b['c']]
-            a['ct'].cells[a['r']][a['c']], b['ct'].cells[b['r']][b['c']] = v2, v1
-            cnt += 1
-    state.last_action_message = f"Shuffled: {cnt}"
+
+            # Don't create matches with target
+            if va == tb or vb == ta:
+                continue
+
+            # Categorize by layer
+            if a['ct'].layer == b['ct'].layer:
+                same_layer_pairs.append((a, b))
+            else:
+                cross_layer_pairs.append((a, b))
+
+    # STEP 3: Calculate target counts based on shuffle_ratio
+    total_available = len(same_layer_pairs) + len(cross_layer_pairs)
+    if total_available == 0:
+        state.last_action_message = "Shuffle: No valid swaps available"
+        return
+
+    # Target counts
+    target_cross = int(total_available * state.shuffle_ratio / 100)
+    target_same = total_available - target_cross
+
+    # Clamp to available
+    actual_cross = min(target_cross, len(cross_layer_pairs))
+    actual_same = min(target_same, len(same_layer_pairs))
+
+    # If not enough cross-layer, compensate with same-layer
+    if actual_cross < target_cross:
+        deficit = target_cross - actual_cross
+        actual_same = min(actual_same + deficit, len(same_layer_pairs))
+
+    # STEP 4: Random select pairs
+    selected_cross = random.sample(cross_layer_pairs, actual_cross) if actual_cross > 0 else []
+    selected_same = random.sample(same_layer_pairs, actual_same) if actual_same > 0 else []
+
+    all_selected = selected_cross + selected_same
+    random.shuffle(all_selected)  # Shuffle order of execution
+
+    # STEP 5: Execute swaps (track to prevent double-swap)
+    swapped_slots = set()
+    swap_count = 0
+    cross_count = 0
+
+    for a, b in all_selected:
+        # Skip if already swapped
+        if a['id'] in swapped_slots or b['id'] in swapped_slots:
+            continue
+
+        # Perform swap
+        va = a['ct'].cells[a['r']][a['c']]
+        vb = b['ct'].cells[b['r']][b['c']]
+        a['ct'].cells[a['r']][a['c']] = vb
+        b['ct'].cells[b['r']][b['c']] = va
+
+        # Track
+        swapped_slots.add(a['id'])
+        swapped_slots.add(b['id'])
+        swap_count += 1
+
+        if a['ct'].layer != b['ct'].layer:
+            cross_count += 1
+
+    # Report
+    cross_pct = int(cross_count * 100 / swap_count) if swap_count > 0 else 0
+    state.last_action_message = f"Shuffled: {swap_count} ({cross_count} cross-layer, {cross_pct}%)"
 
 
 # --- SYSTEM ---
