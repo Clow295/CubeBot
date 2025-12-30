@@ -238,10 +238,10 @@ def is_valid_spawn_position(world_x, world_y, container_cols, container_rows,
         (world_x + container_w_world/2, world_y + container_h_world/2),  # Center
     ]
 
-    # Tất cả các điểm phải cách rayline ít nhất 2.5 units (tăng từ 2.0)
+    # Tất cả các điểm phải cách rayline ít nhất 0.8 unit (giảm từ 2.5)
     for px, py in check_points:
         min_dist = calculate_min_distance_to_rayline(px, py, rayline_points)
-        if min_dist < 2.5:
+        if min_dist < 0.8:
             return False
 
     # Convert world to screen
@@ -308,9 +308,9 @@ def find_spawn_position_near_zone(zone, container_cols, container_rows,
         (screen_x, screen_y, world_x, world_y) hoặc None nếu không tìm được
     """
     for _ in range(max_attempts):
-        # Random offset từ center (tăng min radius từ 2.5 lên 3.0)
+        # Random offset từ center (giảm min radius từ 3.0 xuống 1.5)
         angle = random.uniform(0, 2 * math.pi)
-        radius = random.uniform(3.0, zone['radius'])
+        radius = random.uniform(1.5, zone['radius'])
 
         world_x = zone['center'][0] + radius * math.cos(angle)
         world_y = zone['center'][1] + radius * math.sin(angle)

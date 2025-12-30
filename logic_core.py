@@ -485,7 +485,7 @@ def find_best_slot_for_clustering(target_trays, color):
                     for dr, dc in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
                         nr, nc = r + dr, c + dc
                         if 0 <= nr < ct.rows and 0 <= nc < ct.cols and ct.cells[nr][nc] == color:
-                            has_adj = True;
+                            has_adj = True
                             break
                     if has_adj:
                         candidates_adj.append((ct, r, c))
