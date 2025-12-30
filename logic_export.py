@@ -65,8 +65,8 @@ def export_to_unity_json(filename="Level_0.json"):
 
     for ct in state.containers:
         tid = gen_id()
-        ux = (ct.x - WIDTH / 2) / 100.0
-        uy = -(ct.y - HEIGHT / 2) / 100.0
+        ux = ((ct.x - WIDTH / 2) / 100.0) * 2
+        uy = (-(ct.y - HEIGHT / 2) / 100.0) * 2
         uz = -(ct.layer - 1) * 1.0
 
         data = {
