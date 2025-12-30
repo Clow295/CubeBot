@@ -202,7 +202,7 @@ def is_valid_spawn_position(world_x, world_y, container_cols, container_rows,
     3. Nằm trong boundaries
 
     Args:
-        world_x, world_y: Unity world coordinates
+        world_x, world_y: Unity world coordinates (top-left corner)
         container_cols, container_rows: Kích thước container
         rayline_points: Rayline path
         existing_containers: Danh sách containers hiện có
@@ -212,9 +212,30 @@ def is_valid_spawn_position(world_x, world_y, container_cols, container_rows,
         bool: True nếu hợp lệ
     """
     # Check 1: Distance from rayline
-    min_dist = calculate_min_distance_to_rayline(world_x, world_y, rayline_points)
-    if min_dist < 2.0:
-        return False
+    # IMPORTANT: Kiểm tra khoảng cách từ TẤT CẢ các điểm quan trọng của container
+    # (4 góc + center) đến rayline, không chỉ top-left corner
+
+    # Tính kích thước container trong world space
+    # Công thức: 100 pixels = 2.0 world units → 1 pixel = 0.02 world units
+    # Container width in screen = cols * CELL_SIZE * 2 + 40
+    # Container height in screen = rows * CELL_SIZE
+    container_w_world = (container_cols * CELL_SIZE * 2 + 40) * 0.02
+    container_h_world = (container_rows * CELL_SIZE) * 0.02
+
+    # Các điểm cần kiểm tra (4 góc + center)
+    check_points = [
+        (world_x, world_y),  # Top-left
+        (world_x + container_w_world, world_y),  # Top-right
+        (world_x, world_y + container_h_world),  # Bottom-left
+        (world_x + container_w_world, world_y + container_h_world),  # Bottom-right
+        (world_x + container_w_world/2, world_y + container_h_world/2),  # Center
+    ]
+
+    # Tất cả các điểm phải cách rayline ít nhất 2 units
+    for px, py in check_points:
+        min_dist = calculate_min_distance_to_rayline(px, py, rayline_points)
+        if min_dist < 2.0:
+            return False
 
     # Convert world to screen
     screen_x = world_to_screen_x(world_x)

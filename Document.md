@@ -20,7 +20,7 @@ CubeBot/
 ├── save_level/            # Thư mục lưu level đã xuất
 │   ├── Level_0.json       # File level Unity format
 │   └── Level_0.json.meta  # Unity meta file
-├── .gitignore             # Git ignore configuration
+├── .gitignore             # Git ignore configuration~~~~
 ├── README.md              # Documentation
 ├── config.py              # File cấu hình chính
 ├── logic_core.py          # Core logic và thuật toán

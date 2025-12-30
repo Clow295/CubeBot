@@ -17,7 +17,7 @@ Total Time: ~2 hours
 ```python
 # State class additions:
 rayline_enabled = False
-rayline_points = []
+rayline_points = []~~~~~~~~
 rayline_edit_mode = False
 rayline_temp_drawing = []
 rayline_is_drawing = False

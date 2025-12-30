@@ -104,7 +104,7 @@ while running:
                         state.current_layer = i + 1;
                         state.selected_trays = [];
                         state.selected_cells = []
-                        layout(state.containers)
+                        # KHÔNG GỌI layout() - giữ nguyên position của containers
                     if cb.collidepoint(mx, my): state.layer_checkbox[i] = not state.layer_checkbox[i]
 
                 if FILL_SAME_BTN_RECT.collidepoint(mx, my): save_undo(); fill_same()
@@ -189,7 +189,7 @@ while running:
                 if e.key == pygame.K_SPACE:
                     save_undo();
                     spawn_new_trays();
-                    layout(state.containers)  # Sử dụng hàm spawn_new_trays
+                    # KHÔNG GỌI layout() - spawn_new_trays() đã handle layout bên trong
                 if e.unicode in "123456" and state.selected_trays: save_undo(); fill_n(int(e.unicode))
                 if e.key == pygame.K_d: save_undo(); state.containers = [c for c in state.containers if
                                                                          c not in state.selected_trays]; state.selected_trays = []

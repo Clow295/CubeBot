@@ -361,8 +361,11 @@ def spawn_new_trays():
     """Spawn new trays with optional rayline constraint"""
     master = Container(state.current_layer)
 
-    # Check if rayline enabled and use rayline spawn logic
+    # ============================================
+    # SPAWN MASTER CONTAINER
+    # ============================================
     if state.rayline_enabled and state.rayline_points:
+        # Use rayline constraint spawn - containers spawn XUNG QUANH rayline
         spawn_success = spawn_with_rayline_constraint(master)
         if not spawn_success:
             # Fallback to original spawn
@@ -370,12 +373,17 @@ def spawn_new_trays():
             layout(state.containers)
             state.last_action_message = "Spawned (Rayline fallback)"
             return
+        # KHÔNG GỌI layout() - giữ nguyên position xung quanh rayline
     else:
-        # Original spawn logic (no rayline)
+        # No rayline: append and layout theo grid
         state.containers.append(master)
+        layout(state.containers)
 
-    # Symmetry mode handling
+    # ============================================
+    # SYMMETRY MODE: SPAWN SLAVE CONTAINER
+    # ============================================
     if state.symmetry_mode:
+        # Tạo slave target với color mapping
         slave_rows, slave_cols = master.rows, master.cols
         unique = sorted(list(set(x for row in master.target for x in row if x is not None)))
         color_map = {}
@@ -392,25 +400,25 @@ def spawn_new_trays():
 
         slave = Container(state.current_layer, rows=slave_rows, cols=slave_cols, manual_target=slave_target)
 
+        # Spawn slave
         if state.rayline_enabled and state.rayline_points:
             # Try spawn slave with rayline constraint
             spawn_success = spawn_with_rayline_constraint(slave)
             if not spawn_success:
                 # Fallback: spawn next to master
-                slave.x = master.x + master.cols * CELL_SIZE + 60
+                slave.x = master.x + master.cols * CELL_SIZE * 2 + 100
                 slave.y = master.y
                 state.containers.append(slave)
+            # KHÔNG GỌI layout() - giữ nguyên position xung quanh rayline
         else:
-            # Original position
-            slave.x = master.x + master.cols * CELL_SIZE + 60
+            # No rayline: spawn next to master (master đã có position từ layout ở trên)
+            slave.x = master.x + master.cols * CELL_SIZE * 2 + 100
             slave.y = master.y
             state.containers.append(slave)
+            # KHÔNG GỌI layout() - slave đã có position tương đối với master
 
         state.last_action_message = "Spawned Pair" + (" (Rayline)" if state.rayline_enabled else "")
     else:
-        if not (state.rayline_enabled and state.rayline_points):
-            # Only run layout if not using rayline
-            layout(state.containers)
         state.last_action_message = "Spawned Single" + (" (Rayline)" if state.rayline_enabled else "")
 
 
@@ -627,5 +635,5 @@ def undo():
     state.containers = state.undo_stack.pop()
     state.selected_trays = []
     state.selected_cells = []
-    layout(state.containers)
+    # KHÔNG GỌI layout() - containers đã có position đúng trong undo stack
     state.last_action_message = "Undo"
