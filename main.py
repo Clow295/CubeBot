@@ -4,6 +4,7 @@ from config import *
 from logic_core import *
 from ui import *
 from logic_export import export_to_unity_json
+from logic_rayline import mouse_to_grid
 
 pygame.init()
 SCREEN = pygame.display.set_mode((WIDTH, HEIGHT))
@@ -19,8 +20,58 @@ while running:
     for e in events:
         if e.type == pygame.QUIT: running = False
 
+        # --- MOUSE MOTION for rayline drawing ---
+        if e.type == pygame.MOUSEMOTION and state.rayline_is_drawing:
+            mx, my = pygame.mouse.get_pos()
+            grid_pos = mouse_to_grid(mx, my)
+            if grid_pos and grid_pos not in state.rayline_temp_drawing:
+                # Check if movement is valid (horizontal or vertical, not diagonal)
+                if len(state.rayline_temp_drawing) > 0:
+                    last_gx, last_gy = state.rayline_temp_drawing[-1]
+                    new_gx, new_gy = grid_pos
+                    # Allow only horizontal or vertical movement
+                    if last_gx == new_gx or last_gy == new_gy:
+                        state.rayline_temp_drawing.append(grid_pos)
+                else:
+                    state.rayline_temp_drawing.append(grid_pos)
+
+        # --- MOUSE UP for rayline drawing ---
+        if e.type == pygame.MOUSEBUTTONUP and state.rayline_is_drawing:
+            state.rayline_is_drawing = False
+
         if e.type == pygame.MOUSEBUTTONDOWN:
             mx, my = pygame.mouse.get_pos()
+
+            # --- RAYLINE MODAL HANDLING ---
+            if state.rayline_edit_mode:
+                # Check button clicks
+                if RAYLINE_SAVE_BTN.collidepoint(mx, my):
+                    # Save rayline
+                    state.rayline_points = state.rayline_temp_drawing[:]
+                    state.rayline_enabled = len(state.rayline_points) > 0
+                    state.last_action_message = f"Rayline Saved ({len(state.rayline_points)} pts)"
+                    continue
+
+                if RAYLINE_CLEAR_BTN.collidepoint(mx, my):
+                    # Clear rayline
+                    state.rayline_points = []
+                    state.rayline_temp_drawing = []
+                    state.rayline_enabled = False
+                    state.last_action_message = "Rayline Cleared"
+                    continue
+
+                if RAYLINE_CLOSE_BTN.collidepoint(mx, my):
+                    # Close modal
+                    state.rayline_edit_mode = False
+                    state.rayline_temp_drawing = state.rayline_points[:]
+                    continue
+
+                # Check grid click - start drawing
+                grid_pos = mouse_to_grid(mx, my)
+                if grid_pos:
+                    state.rayline_is_drawing = True
+                    state.rayline_temp_drawing = [grid_pos]
+                continue
 
             # --- LEFT PANEL ---
             if mx < PANEL_LEFT_W:
@@ -169,11 +220,24 @@ while running:
                 if e.key == pygame.K_COMMA: state.max_same_color = max(1, state.max_same_color - 1)
                 if e.key == pygame.K_PERIOD: state.max_same_color = min(10, state.max_same_color + 1)
 
+                # Rayline editor shortcut
+                if e.key == pygame.K_r:
+                    state.rayline_edit_mode = not state.rayline_edit_mode
+                    if state.rayline_edit_mode:
+                        state.rayline_temp_drawing = state.rayline_points[:]
+                        state.last_action_message = "Rayline Editor Opened"
+                    else:
+                        state.last_action_message = "Rayline Editor Closed"
+
     draw_stats(SCREEN)
     draw_table(SCREEN)
     draw_right_panel(SCREEN)
     draw_instruction(SCREEN)
     draw_gameplay(SCREEN)
+
+    # Draw rayline modal if in edit mode
+    if state.rayline_edit_mode:
+        draw_rayline_modal(SCREEN)
 
     pygame.display.flip()
     CLOCK.tick(60)

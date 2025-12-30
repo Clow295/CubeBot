@@ -58,6 +58,7 @@ class Container:
             self.target = generate_cluster_pattern(self.rows, self.cols, self.max_types)
 
         self.x, self.y, self.layer = 0, 0, layer
+        self.world_x, self.world_y = 0.0, 0.0  # Unity world coordinates (for rayline spawn)
 
     def draw_target(self, s):
         pygame.draw.rect(s, (255, 255, 255),
@@ -355,10 +356,25 @@ def sort_selected_trays(trays_to_sort):
     state.last_action_message = f"Sorted {count} trays (Merged {merges})"
 
 
-# --- SPAWN (SYMMETRY) ---
+# --- SPAWN (SYMMETRY + RAYLINE) ---
 def spawn_new_trays():
+    """Spawn new trays with optional rayline constraint"""
     master = Container(state.current_layer)
-    state.containers.append(master)
+
+    # Check if rayline enabled and use rayline spawn logic
+    if state.rayline_enabled and state.rayline_points:
+        spawn_success = spawn_with_rayline_constraint(master)
+        if not spawn_success:
+            # Fallback to original spawn
+            state.containers.append(master)
+            layout(state.containers)
+            state.last_action_message = "Spawned (Rayline fallback)"
+            return
+    else:
+        # Original spawn logic (no rayline)
+        state.containers.append(master)
+
+    # Symmetry mode handling
     if state.symmetry_mode:
         slave_rows, slave_cols = master.rows, master.cols
         unique = sorted(list(set(x for row in master.target for x in row if x is not None)))
@@ -375,12 +391,74 @@ def spawn_new_trays():
                 slave_target[r][c] = color_map.get(orig, orig)
 
         slave = Container(state.current_layer, rows=slave_rows, cols=slave_cols, manual_target=slave_target)
-        slave.x = master.x + master.cols * CELL_SIZE + 60
-        slave.y = master.y
-        state.containers.append(slave)
-        state.last_action_message = "Spawned Pair"
+
+        if state.rayline_enabled and state.rayline_points:
+            # Try spawn slave with rayline constraint
+            spawn_success = spawn_with_rayline_constraint(slave)
+            if not spawn_success:
+                # Fallback: spawn next to master
+                slave.x = master.x + master.cols * CELL_SIZE + 60
+                slave.y = master.y
+                state.containers.append(slave)
+        else:
+            # Original position
+            slave.x = master.x + master.cols * CELL_SIZE + 60
+            slave.y = master.y
+            state.containers.append(slave)
+
+        state.last_action_message = "Spawned Pair" + (" (Rayline)" if state.rayline_enabled else "")
     else:
-        state.last_action_message = "Spawned Single"
+        if not (state.rayline_enabled and state.rayline_points):
+            # Only run layout if not using rayline
+            layout(state.containers)
+        state.last_action_message = "Spawned Single" + (" (Rayline)" if state.rayline_enabled else "")
+
+
+def spawn_with_rayline_constraint(container):
+    """
+    Spawn container với rayline constraint
+    Returns True nếu spawn thành công, False nếu không tìm được vị trí hợp lệ
+    """
+    from logic_rayline import calculate_spawn_zones, find_spawn_position_near_zone
+
+    # Calculate spawn zones
+    zones = calculate_spawn_zones(state.rayline_points, num_zones=8)
+
+    if not zones:
+        return False
+
+    # Random chọn zone chưa dùng
+    import random
+    available_zones = [z for z in zones if not z['used']]
+    if not available_zones:
+        # Reset all zones
+        for z in zones:
+            z['used'] = False
+        available_zones = zones
+
+    # Shuffle zones để random
+    random.shuffle(available_zones)
+
+    # Thử tìm vị trí hợp lệ ở các zones
+    for zone in available_zones:
+        result = find_spawn_position_near_zone(
+            zone, container.cols, container.rows,
+            state.rayline_points, state.containers, state.current_layer,
+            max_attempts=30
+        )
+
+        if result:
+            screen_x, screen_y, world_x, world_y = result
+            container.x = int(screen_x)
+            container.y = int(screen_y)
+            # Store world coordinates (optional, for future use)
+            container.world_x = world_x
+            container.world_y = world_y
+            state.containers.append(container)
+            zone['used'] = True
+            return True
+
+    return False
 
 
 # --- FILL LOGIC (UNCHANGED) ---

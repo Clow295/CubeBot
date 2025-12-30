@@ -108,10 +108,11 @@ def draw_right_panel(screen):
 
 def draw_instruction(screen):
     ins = ["Space:Spawn", "1-6:Fill N", "P:Paint Mode", "0-9:Paint Block", "Alt+0-9:Target", "T:Swap", "S:Shuffle",
-           "U:Undo", "D:Del", "E:Export"]
+           "U:Undo", "D:Del", "E:Export", "R:Rayline Editor"]
     start_y = RATIO_LABEL_Y + 60
     for k, t in enumerate(ins):
-        screen.blit(pygame.font.SysFont(None, 18).render(t, 1, (200, 200, 200)), (PANEL_RIGHT_X + 20, start_y + k * 18))
+        col = (0, 255, 255) if t == "R:Rayline Editor" and state.rayline_enabled else (200, 200, 200)
+        screen.blit(pygame.font.SysFont(None, 18).render(t, 1, col), (PANEL_RIGHT_X + 20, start_y + k * 18))
 
 
 def draw_gameplay(screen):
@@ -137,3 +138,137 @@ def draw_gameplay(screen):
     info = f"Var:{state.tray_color_variety} | MaxSame:{state.max_same_color}"
     screen.blit(pygame.font.SysFont(None, 24).render(info, 1, (150, 255, 150)), (20, h - 40))
     screen.blit(pygame.font.SysFont(None, 30).render(state.last_action_message, 1, (255, 255, 0)), (20, h - 70))
+
+
+# ============================================
+# RAYLINE MODAL UI
+# ============================================
+
+def draw_rayline_modal(screen):
+    """Vẽ rayline editor modal"""
+    # Dim background
+    overlay = pygame.Surface((WIDTH, HEIGHT))
+    overlay.set_alpha(180)
+    overlay.fill((0, 0, 0))
+    screen.blit(overlay, (0, 0))
+
+    # Modal background
+    modal_rect = pygame.Rect(RAYLINE_MODAL_X, RAYLINE_MODAL_Y, RAYLINE_MODAL_W, RAYLINE_MODAL_H)
+    pygame.draw.rect(screen, RAYLINE_MODAL_BG, modal_rect)
+    pygame.draw.rect(screen, TEXT_WHITE, modal_rect, 3)
+
+    # Title
+    title_font = pygame.font.SysFont(None, 36)
+    title_text = title_font.render("RAYLINE EDITOR", True, TEXT_WHITE)
+    title_x = RAYLINE_MODAL_X + (RAYLINE_MODAL_W - title_text.get_width()) // 2
+    screen.blit(title_text, (title_x, RAYLINE_MODAL_Y + 20))
+
+    # Draw grid
+    draw_rayline_grid(screen)
+
+    # Draw path
+    draw_rayline_path(screen)
+
+    # Draw controls
+    draw_rayline_controls(screen)
+
+    # Status text
+    num_points = len(state.rayline_temp_drawing) if state.rayline_is_drawing else len(state.rayline_points)
+    status_text = f"Points: {num_points}"
+    if state.rayline_enabled:
+        status_text += " | Rayline ENABLED"
+
+    status_font = pygame.font.SysFont(None, 24)
+    status_surface = status_font.render(status_text, True, (200, 200, 200))
+    screen.blit(status_surface, (RAYLINE_MODAL_X + 20, RAYLINE_BTN_Y + 50))
+
+
+def draw_rayline_grid(screen):
+    """Vẽ grid 10x10"""
+    # Grid background
+    grid_rect = pygame.Rect(RAYLINE_GRID_X, RAYLINE_GRID_Y, RAYLINE_GRID_TOTAL, RAYLINE_GRID_TOTAL)
+    pygame.draw.rect(screen, RAYLINE_GRID_BG, grid_rect)
+
+    # Grid lines
+    for i in range(RAYLINE_GRID_SIZE + 1):
+        # Vertical lines
+        x = RAYLINE_GRID_X + i * RAYLINE_CELL_SIZE
+        pygame.draw.line(screen, RAYLINE_GRID_LINE,
+                        (x, RAYLINE_GRID_Y),
+                        (x, RAYLINE_GRID_Y + RAYLINE_GRID_TOTAL), 1)
+
+        # Horizontal lines
+        y = RAYLINE_GRID_Y + i * RAYLINE_CELL_SIZE
+        pygame.draw.line(screen, RAYLINE_GRID_LINE,
+                        (RAYLINE_GRID_X, y),
+                        (RAYLINE_GRID_X + RAYLINE_GRID_TOTAL, y), 1)
+
+    # Hover effect
+    mx, my = pygame.mouse.get_pos()
+    from logic_rayline import mouse_to_grid
+    grid_pos = mouse_to_grid(mx, my)
+    if grid_pos:
+        gx, gy = grid_pos
+        cell_x = RAYLINE_GRID_X + gx * RAYLINE_CELL_SIZE
+        cell_y = RAYLINE_GRID_Y + gy * RAYLINE_CELL_SIZE
+        hover_rect = pygame.Rect(cell_x, cell_y, RAYLINE_CELL_SIZE, RAYLINE_CELL_SIZE)
+        pygame.draw.rect(screen, RAYLINE_HOVER_COLOR, hover_rect)
+
+    # Grid border
+    pygame.draw.rect(screen, TEXT_WHITE, grid_rect, 2)
+
+
+def draw_rayline_path(screen):
+    """Vẽ rayline path"""
+    # Vẽ saved path
+    points_to_draw = state.rayline_points if not state.rayline_is_drawing else state.rayline_temp_drawing
+
+    if len(points_to_draw) < 1:
+        return
+
+    # Draw cells
+    for gx, gy in points_to_draw:
+        cell_x = RAYLINE_GRID_X + gx * RAYLINE_CELL_SIZE
+        cell_y = RAYLINE_GRID_Y + gy * RAYLINE_CELL_SIZE
+        cell_rect = pygame.Rect(cell_x, cell_y, RAYLINE_CELL_SIZE, RAYLINE_CELL_SIZE)
+        pygame.draw.rect(screen, RAYLINE_PATH_COLOR, cell_rect)
+        pygame.draw.rect(screen, TEXT_WHITE, cell_rect, 2)
+
+    # Draw connecting lines
+    if len(points_to_draw) > 1:
+        for i in range(len(points_to_draw) - 1):
+            gx1, gy1 = points_to_draw[i]
+            gx2, gy2 = points_to_draw[i + 1]
+
+            x1 = RAYLINE_GRID_X + gx1 * RAYLINE_CELL_SIZE + RAYLINE_CELL_SIZE // 2
+            y1 = RAYLINE_GRID_Y + gy1 * RAYLINE_CELL_SIZE + RAYLINE_CELL_SIZE // 2
+            x2 = RAYLINE_GRID_X + gx2 * RAYLINE_CELL_SIZE + RAYLINE_CELL_SIZE // 2
+            y2 = RAYLINE_GRID_Y + gy2 * RAYLINE_CELL_SIZE + RAYLINE_CELL_SIZE // 2
+
+            pygame.draw.line(screen, (255, 255, 255), (x1, y1), (x2, y2), 3)
+
+
+def draw_rayline_controls(screen):
+    """Vẽ control buttons"""
+    font = pygame.font.SysFont(None, 28)
+
+    # Save button
+    pygame.draw.rect(screen, (50, 150, 50), RAYLINE_SAVE_BTN)
+    pygame.draw.rect(screen, TEXT_WHITE, RAYLINE_SAVE_BTN, 2)
+    save_text = font.render("Save", True, TEXT_WHITE)
+    screen.blit(save_text, (RAYLINE_SAVE_BTN.x + (RAYLINE_BTN_W - save_text.get_width()) // 2,
+                           RAYLINE_SAVE_BTN.y + 8))
+
+    # Clear button
+    pygame.draw.rect(screen, (150, 50, 50), RAYLINE_CLEAR_BTN)
+    pygame.draw.rect(screen, TEXT_WHITE, RAYLINE_CLEAR_BTN, 2)
+    clear_text = font.render("Clear", True, TEXT_WHITE)
+    screen.blit(clear_text, (RAYLINE_CLEAR_BTN.x + (RAYLINE_BTN_W - clear_text.get_width()) // 2,
+                            RAYLINE_CLEAR_BTN.y + 8))
+
+    # Close button
+    pygame.draw.rect(screen, (100, 100, 100), RAYLINE_CLOSE_BTN)
+    pygame.draw.rect(screen, TEXT_WHITE, RAYLINE_CLOSE_BTN, 2)
+    close_text = font.render("Close", True, TEXT_WHITE)
+    screen.blit(close_text, (RAYLINE_CLOSE_BTN.x + (RAYLINE_BTN_W - close_text.get_width()) // 2,
+                            RAYLINE_CLOSE_BTN.y + 8))

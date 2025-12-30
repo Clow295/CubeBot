@@ -48,6 +48,13 @@ class State:
     shuffle_ratio = 50
     symmetry_mode = False  # <--- Mode đối xứng
 
+    # Rayline Data
+    rayline_enabled = False          # Toggle rayline on/off
+    rayline_points = []              # List of (grid_x, grid_y) tuples
+    rayline_edit_mode = False        # True khi đang vẽ rayline
+    rayline_temp_drawing = []        # Temporary path khi đang drag
+    rayline_is_drawing = False       # Flag cho mouse drag state
+
     # Ratio Table
     ratio_ui_rows = [
         {'size': '2x2', 'weight': '10', 'limit': '2'},
@@ -95,6 +102,35 @@ SYMMETRY_BTN_RECT = pygame.Rect(BTN_X, START_BTN_Y + SPACING_BTN * 6, BTN_W, BTN
 RATIO_LABEL_Y = START_BTN_Y + SPACING_BTN * 7 + 10
 RATIO_MINUS_RECT = pygame.Rect(BTN_X, RATIO_LABEL_Y + 5, 40, 30)
 RATIO_PLUS_RECT = pygame.Rect(BTN_X + 150, RATIO_LABEL_Y + 5, 40, 30)
+
+# --- RAYLINE MODAL ---
+RAYLINE_GRID_SIZE = 10           # Grid 10x10
+RAYLINE_CELL_SIZE = 40           # Mỗi ô 40px
+RAYLINE_GRID_TOTAL = RAYLINE_GRID_SIZE * RAYLINE_CELL_SIZE  # 400px
+
+RAYLINE_MODAL_W = 600
+RAYLINE_MODAL_H = 700
+RAYLINE_MODAL_X = (WIDTH - RAYLINE_MODAL_W) // 2
+RAYLINE_MODAL_Y = (HEIGHT - RAYLINE_MODAL_H) // 2
+
+RAYLINE_GRID_X = RAYLINE_MODAL_X + (RAYLINE_MODAL_W - RAYLINE_GRID_TOTAL) // 2
+RAYLINE_GRID_Y = RAYLINE_MODAL_Y + 80
+
+# Rayline control buttons
+RAYLINE_BTN_W = 150
+RAYLINE_BTN_H = 40
+RAYLINE_BTN_Y = RAYLINE_GRID_Y + RAYLINE_GRID_TOTAL + 40
+
+RAYLINE_SAVE_BTN = pygame.Rect(RAYLINE_MODAL_X + 50, RAYLINE_BTN_Y, RAYLINE_BTN_W, RAYLINE_BTN_H)
+RAYLINE_CLEAR_BTN = pygame.Rect(RAYLINE_MODAL_X + 220, RAYLINE_BTN_Y, RAYLINE_BTN_W, RAYLINE_BTN_H)
+RAYLINE_CLOSE_BTN = pygame.Rect(RAYLINE_MODAL_X + 390, RAYLINE_BTN_Y, RAYLINE_BTN_W, RAYLINE_BTN_H)
+
+# Rayline colors
+RAYLINE_MODAL_BG = (40, 40, 40)
+RAYLINE_GRID_BG = (60, 60, 60)
+RAYLINE_GRID_LINE = (100, 100, 100)
+RAYLINE_PATH_COLOR = (0, 255, 255)  # Cyan
+RAYLINE_HOVER_COLOR = (100, 150, 100)
 
 
 def generate_id(counter):
