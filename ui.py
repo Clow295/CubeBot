@@ -96,6 +96,12 @@ def draw_right_panel(screen):
     screen.blit(pygame.font.SysFont(None, 22).render(f"Spawn Symmetry: {status}", 1, TEXT_WHITE),
                 (SYMMETRY_BTN_RECT.x + 30, SYMMETRY_BTN_RECT.y + 8))
 
+    # Fix Color Button
+    pygame.draw.rect(screen, (50, 100, 150), FIX_COLOR_BTN_RECT)
+    pygame.draw.rect(screen, TEXT_WHITE, FIX_COLOR_BTN_RECT, 2)
+    screen.blit(pygame.font.SysFont(None, 22).render("Fix Color", 1, TEXT_WHITE),
+                (FIX_COLOR_BTN_RECT.x + 70, FIX_COLOR_BTN_RECT.y + 8))
+
     # Shuffle Ratio
     pygame.draw.rect(screen, (150, 50, 50), RATIO_MINUS_RECT)
     pygame.draw.rect(screen, (50, 150, 50), RATIO_PLUS_RECT)

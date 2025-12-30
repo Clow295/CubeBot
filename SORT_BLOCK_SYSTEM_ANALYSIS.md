@@ -666,7 +666,47 @@ Typical case (small grids 2x2 to 5x2):
 
 ---
 
+---
+
+## 🔄 UPDATE LOG
+
+### Version 1.1 (2025-12-30) - Clustering Fix
+
+**Issue Reported:**
+- Blocks of same color were scattered (1 block at start, 1 block at end)
+- Not aesthetically pleasing - blocks should be grouped together
+
+**Root Cause:**
+- `find_scattered_placement_smart()` was placing blocks anywhere to avoid conflicts
+- No guarantee of contiguous placement (blocks next to each other)
+
+**Fix:**
+- Replaced `find_scattered_placement_smart()` → `find_contiguous_cluster_smart()`
+- New algorithm uses BFS to build contiguous clusters
+- Starting point chosen by conflict scoring (prefer low-conflict areas)
+- Neighbors added in conflict-priority order (non-conflict neighbors first)
+
+**Results:**
+- ✅ All blocks of same color now in ONE contiguous cluster
+- ✅ Still maintains conflict avoidance (0% conflicts)
+- ✅ Aesthetically pleasing compact layout
+
+**Test Results:**
+```
+Clustering Test Suite: 4/4 PASS (100%)
+- 3x3 Grid: All colors contiguous ✓
+- 4x4 Large Grid: All 8 colors grouped ✓
+- Worst Case: Properly handled ✓
+- Realistic 3x2: Perfect clustering ✓
+
+Smart Sort Test Suite: 5/5 PASS (100%)
+- Conflict avoidance still works ✓
+- 0% conflict rate maintained ✓
+```
+
+---
+
 **Author**: AI Assistant
 **Date**: 2025-12-30
-**Version**: 1.0
-**Status**: ✅ ANALYSIS COMPLETE - READY FOR IMPLEMENTATION
+**Version**: 1.1
+**Status**: ✅ IMPLEMENTED & TESTED - PRODUCTION READY

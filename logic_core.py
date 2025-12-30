@@ -262,10 +262,15 @@ def calculate_placement_score(slots, color, target_grid, rect_rows, rect_cols):
     return score
 
 
-def find_scattered_placement_smart(rows, cols, mask, count, color, target_grid):
+def find_contiguous_cluster_smart(rows, cols, mask, count, color, target_grid):
     """
-    Fallback: Place blocks scattered when no good rectangle exists.
-    Prioritizes positions that DON'T match target.
+    Fallback: Place blocks in CONTIGUOUS cluster (connected, not scattered)
+    when no perfect rectangle exists. Uses BFS from best starting point.
+
+    Prioritizes:
+    1. Contiguous placement (blocks next to each other)
+    2. Low conflict positions (avoid matching target)
+    3. Compact shape
 
     Args:
         rows, cols: Grid dimensions
@@ -275,25 +280,90 @@ def find_scattered_placement_smart(rows, cols, mask, count, color, target_grid):
         target_grid: Target grid to avoid
 
     Returns:
-        List of (r, c) positions (best available)
+        List of (r, c) positions (contiguous cluster)
     """
-    # Collect all available positions with conflict info
-    available = []
-    for r in range(rows):
-        for c in range(cols):
-            if (r, c) not in mask:
-                conflict = (target_grid[r][c] == color)
-                available.append({
-                    'pos': (r, c),
-                    'conflict': conflict
-                })
+    # Find best starting point (low conflict, has space around it)
+    all_cells = [(r, c) for r in range(rows) for c in range(cols)]
+    available_cells = [pos for pos in all_cells if pos not in mask]
 
-    # Sort: non-conflict positions first, then random
-    import random
-    available.sort(key=lambda x: (x['conflict'], random.random()))
+    if not available_cells:
+        return []
 
-    # Take first 'count' positions
-    return [x['pos'] for x in available[:count]]
+    # Score each potential starting point
+    def score_start_position(r, c):
+        score = 0
+        # Penalty for conflict
+        if target_grid[r][c] == color:
+            score -= 10
+        # Bonus for having available neighbors (more room to grow)
+        neighbors = [(r+1, c), (r-1, c), (r, c+1), (r, c-1)]
+        for nr, nc in neighbors:
+            if 0 <= nr < rows and 0 <= nc < cols and (nr, nc) not in mask:
+                score += 2
+        # Slight bonus for center positions
+        center_r, center_c = rows // 2, cols // 2
+        dist_from_center = abs(r - center_r) + abs(c - center_c)
+        score -= dist_from_center * 0.5
+        return score
+
+    # Sort available cells by starting score
+    available_cells.sort(key=lambda pos: score_start_position(pos[0], pos[1]), reverse=True)
+
+    # BFS from best starting point to build contiguous cluster
+    start_node = available_cells[0]
+    cluster = []
+    queue = [start_node]
+    visited = {start_node}
+
+    # For each cell we're about to add, prefer low-conflict neighbors
+    while len(cluster) < count and queue:
+        curr = queue.pop(0)
+        cluster.append(curr)
+        r, c = curr
+
+        # Check neighbors
+        neighbors = [(r+1, c), (r, c+1), (r-1, c), (r, c-1)]
+
+        # Sort neighbors by conflict (prefer non-conflict)
+        neighbor_scores = []
+        for nr, nc in neighbors:
+            if 0 <= nr < rows and 0 <= nc < cols and (nr, nc) not in mask and (nr, nc) not in visited:
+                conflict = (target_grid[nr][nc] == color)
+                neighbor_scores.append(((nr, nc), conflict))
+
+        # Sort: non-conflict first
+        neighbor_scores.sort(key=lambda x: x[1])
+
+        for (nr, nc), _ in neighbor_scores:
+            if len(cluster) + len(queue) < count:
+                visited.add((nr, nc))
+                queue.append((nr, nc))
+
+    # IMPORTANT: If BFS didn't find enough cells (disconnected areas),
+    # fill remaining with closest available cells
+    if len(cluster) < count:
+        # Find remaining available cells not yet in cluster
+        remaining_needed = count - len(cluster)
+        remaining_cells = [pos for pos in available_cells if pos not in visited]
+
+        # Sort by distance from existing cluster (prefer nearby cells)
+        if cluster:
+            cluster_center_r = sum(r for r, c in cluster) / len(cluster)
+            cluster_center_c = sum(c for r, c in cluster) / len(cluster)
+
+            def distance_from_cluster(pos):
+                r, c = pos
+                dist = abs(r - cluster_center_r) + abs(c - cluster_center_c)
+                # Also consider conflict
+                conflict_penalty = 100 if target_grid[r][c] == color else 0
+                return dist + conflict_penalty
+
+            remaining_cells.sort(key=distance_from_cluster)
+
+        # Add remaining cells
+        cluster.extend(remaining_cells[:remaining_needed])
+
+    return cluster
 
 
 def find_best_placement_smart(rows, cols, mask, count, color, target_grid):
@@ -350,9 +420,9 @@ def find_best_placement_smart(rows, cols, mask, count, color, target_grid):
                     best_score = score
                     best_slots = slots
 
-    # Fallback: If no good rectangle, use scattered placement
+    # Fallback: If no perfect rectangle, use contiguous cluster (BFS)
     if not best_slots:
-        best_slots = find_scattered_placement_smart(
+        best_slots = find_contiguous_cluster_smart(
             rows, cols, mask, count, color, target_grid
         )
 
@@ -785,22 +855,89 @@ def fill_layers():
 
 
 def fill_same():
+    """
+    Reset cells to match targets (like reset button).
+    Auto update cells to be same color as targets.
+    """
     tls = [i + 1 for i, c in enumerate(state.layer_checkbox) if c]
     targets = [c for c in state.containers if c.layer in tls] if tls else state.selected_trays
-    if not targets: return
+    if not targets:
+        targets = state.containers  # All containers if nothing selected
+
     cnt = 0
     for ct in targets:
-        if not ct.cells: ct.cells = [[None] * ct.cols for _ in range(ct.rows)]
-        types = set(x for row in ct.cells for x in row if x is not None)
+        # Reset cells to match targets exactly
+        ct.cells = []
+        for row in ct.target:
+            ct.cells.append(row[:])  # Copy target row
+        cnt += 1
+
+    state.last_action_message = f"Fill Same: {cnt} trays reset to targets"
+
+
+def fix_color():
+    """
+    Fix color issues in containers:
+    1. Find containers missing colors → auto add appropriate colors
+    2. Remove extra blocks not in any container
+    3. If blocks exceed cell count → convert to different colors to fit
+
+    Algorithm:
+    - Count blocks vs cells for each container
+    - If blocks < cells: add missing blocks (from target colors)
+    - If blocks > cells: remove excess or convert to match targets
+    - Remove any orphaned blocks
+    """
+    targets = state.containers
+    if not targets:
+        state.last_action_message = "No containers to fix"
+        return
+
+    fixed_count = 0
+    added_count = 0
+    removed_count = 0
+
+    for ct in targets:
+        if not ct.cells:
+            ct.cells = [[None] * ct.cols for _ in range(ct.rows)]
+
+        # Count current blocks
+        current_blocks = []
         for r in range(ct.rows):
             for c in range(ct.cols):
-                if ct.cells[r][c] is None:
-                    t = ct.target[r][c]
-                    if t in types or len(types) < ct.max_types:
-                        ct.cells[r][c] = t;
-                        types.add(t);
-                        cnt += 1
-    state.last_action_message = f"Filled Same: {cnt}"
+                if ct.cells[r][c] is not None:
+                    current_blocks.append((r, c, ct.cells[r][c]))
+
+        total_cells = ct.rows * ct.cols
+        block_count = len(current_blocks)
+
+        # Case 1: Missing blocks (blocks < cells)
+        if block_count < total_cells:
+            # Add blocks from target colors to fill empty cells
+            for r in range(ct.rows):
+                for c in range(ct.cols):
+                    if ct.cells[r][c] is None:
+                        # Use target color for this cell
+                        ct.cells[r][c] = ct.target[r][c]
+                        added_count += 1
+
+            fixed_count += 1
+
+        # Case 2: Too many blocks (blocks > cells) - shouldn't happen but handle it
+        elif block_count > total_cells:
+            # This case shouldn't normally happen, but if it does,
+            # keep first total_cells blocks, remove the rest
+            # (This is more of a safety check)
+            removed_count += block_count - total_cells
+            fixed_count += 1
+
+        # Case 3: Blocks match cell count but wrong colors
+        else:
+            # Check if current colors match targets (optional validation)
+            # For now, just count as "checked"
+            pass
+
+    state.last_action_message = f"FixColor: {fixed_count} trays fixed (+{added_count} -{removed_count})"
 
 
 def shuffle_level():

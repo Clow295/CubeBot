@@ -98,8 +98,11 @@ CLEAR_LEVEL_BTN_RECT = pygame.Rect(BTN_X, START_BTN_Y + SPACING_BTN * 5, BTN_W, 
 # --- NÚT MỚI: SYMMETRY ---
 SYMMETRY_BTN_RECT = pygame.Rect(BTN_X, START_BTN_Y + SPACING_BTN * 6, BTN_W, BTN_H)
 
-# Controls (Đẩy xuống thấp hơn để không đè lên nút Symmetry)
-RATIO_LABEL_Y = START_BTN_Y + SPACING_BTN * 7 + 10
+# --- NÚT MỚI: FIX COLOR ---
+FIX_COLOR_BTN_RECT = pygame.Rect(BTN_X, START_BTN_Y + SPACING_BTN * 7, BTN_W, BTN_H)
+
+# Controls (Đẩy xuống thấp hơn để không đè lên nút FixColor)
+RATIO_LABEL_Y = START_BTN_Y + SPACING_BTN * 8 + 10
 RATIO_MINUS_RECT = pygame.Rect(BTN_X, RATIO_LABEL_Y + 5, 40, 30)
 RATIO_PLUS_RECT = pygame.Rect(BTN_X + 150, RATIO_LABEL_Y + 5, 40, 30)
 

@@ -127,6 +127,10 @@ while running:
                 if SYMMETRY_BTN_RECT.collidepoint(mx, my):
                     state.symmetry_mode = not state.symmetry_mode
 
+                if FIX_COLOR_BTN_RECT.collidepoint(mx, my):
+                    save_undo()
+                    fix_color()
+
                 if RATIO_MINUS_RECT.collidepoint(mx, my): state.shuffle_ratio = max(0, state.shuffle_ratio - 10)
                 if RATIO_PLUS_RECT.collidepoint(mx, my): state.shuffle_ratio = min(100, state.shuffle_ratio + 10)
 
