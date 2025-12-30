@@ -368,10 +368,8 @@ def spawn_new_trays():
         # Use rayline constraint spawn - containers spawn XUNG QUANH rayline
         spawn_success = spawn_with_rayline_constraint(master)
         if not spawn_success:
-            # Fallback to original spawn
-            state.containers.append(master)
-            layout(state.containers)
-            state.last_action_message = "Spawned (Rayline fallback)"
+            # KHÔNG FALLBACK VỀ LAYOUT - chỉ show message và return
+            state.last_action_message = "Spawn failed: No space around rayline"
             return
         # KHÔNG GỌI layout() - giữ nguyên position xung quanh rayline
     else:
@@ -429,8 +427,8 @@ def spawn_with_rayline_constraint(container):
     """
     from logic_rayline import calculate_spawn_zones, find_spawn_position_near_zone
 
-    # Calculate spawn zones
-    zones = calculate_spawn_zones(state.rayline_points, num_zones=8)
+    # Calculate spawn zones (tăng từ 8 lên 24 zones để spawn nhiều containers hơn)
+    zones = calculate_spawn_zones(state.rayline_points, num_zones=24)
 
     if not zones:
         return False
@@ -452,7 +450,7 @@ def spawn_with_rayline_constraint(container):
         result = find_spawn_position_near_zone(
             zone, container.cols, container.rows,
             state.rayline_points, state.containers, state.current_layer,
-            max_attempts=30
+            max_attempts=100  # Tăng từ 30 lên 100 để tìm vị trí tốt hơn
         )
 
         if result:

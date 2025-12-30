@@ -116,6 +116,31 @@ def draw_instruction(screen):
 
 
 def draw_gameplay(screen):
+    # Vẽ rayline trong gameplay area (nếu enabled)
+    if state.rayline_enabled and state.rayline_points:
+        from logic_rayline import grid_to_world, world_to_screen_x, world_to_screen_y
+
+        # Vẽ rayline path với màu mờ
+        for i in range(len(state.rayline_points)):
+            gx, gy = state.rayline_points[i]
+            wx, wy = grid_to_world(gx, gy)
+            sx = world_to_screen_x(wx)
+            sy = world_to_screen_y(wy)
+
+            # Vẽ circle tại mỗi điểm
+            pygame.draw.circle(screen, (100, 200, 255), (int(sx), int(sy)), 8, 3)
+
+            # Vẽ line nối giữa các điểm
+            if i > 0:
+                prev_gx, prev_gy = state.rayline_points[i-1]
+                prev_wx, prev_wy = grid_to_world(prev_gx, prev_gy)
+                prev_sx = world_to_screen_x(prev_wx)
+                prev_sy = world_to_screen_y(prev_wy)
+                pygame.draw.line(screen, (100, 200, 255),
+                               (int(prev_sx), int(prev_sy)),
+                               (int(sx), int(sy)), 4)
+
+    # Vẽ containers
     vis = [c for c in state.containers if c.layer == state.current_layer]
     for ct in vis:
         ct.draw_target(screen)
@@ -220,8 +245,12 @@ def draw_rayline_grid(screen):
 
 def draw_rayline_path(screen):
     """Vẽ rayline path"""
-    # Vẽ saved path
-    points_to_draw = state.rayline_points if not state.rayline_is_drawing else state.rayline_temp_drawing
+    # Vẽ temp drawing khi đang trong edit mode (hiển thị ngay khi vẽ)
+    # Nếu không trong edit mode, vẽ saved path
+    if state.rayline_edit_mode:
+        points_to_draw = state.rayline_temp_drawing
+    else:
+        points_to_draw = state.rayline_points
 
     if len(points_to_draw) < 1:
         return

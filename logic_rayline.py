@@ -19,18 +19,25 @@ from config import *
 def grid_to_world(grid_x, grid_y):
     """
     Convert grid coordinate to Unity world space
-    Grid: (0,0) đến (9,9)
-    World: (-5,-5) đến (5,5)
+    Grid: (0,0) top-left đến (15,15) bottom-right (Y+ down) - 16x16 grid
+    World: (-8,8) top-left đến (8,-8) bottom-right (Y+ up)
+
+    NOTE: Y axis đảo ngược vì grid Y+ down, world Y+ up
+    Grid size: 16x16 → center at 7.5
     """
-    world_x = (grid_x - 4.5) * 1.0
-    world_y = (grid_y - 4.5) * 1.0
+    world_x = (grid_x - 7.5) * 1.0  # Center at 7.5 cho grid 16x16
+    world_y = (7.5 - grid_y) * 1.0  # ĐẢO NGƯỢC Y
     return (world_x, world_y)
 
 
 def world_to_grid(world_x, world_y):
-    """Convert Unity world coordinate to grid"""
-    grid_x = int(round(world_x + 4.5))
-    grid_y = int(round(world_y + 4.5))
+    """
+    Convert Unity world coordinate to grid
+    NOTE: Y axis đảo ngược
+    Grid 16x16 → center at 7.5
+    """
+    grid_x = int(round(world_x + 7.5))  # Center at 7.5 cho grid 16x16
+    grid_y = int(round(7.5 - world_y))  # ĐẢO NGƯỢC Y
     # Clamp to grid bounds
     grid_x = max(0, min(RAYLINE_GRID_SIZE - 1, grid_x))
     grid_y = max(0, min(RAYLINE_GRID_SIZE - 1, grid_y))
@@ -154,7 +161,7 @@ def calculate_spawn_zones(rayline_points, num_zones=8):
             wx, wy = grid_to_world(gx, gy)
             zones.append({
                 'center': (wx, wy),
-                'radius': 4.0,  # Radius lớn hơn
+                'radius': 5.0,  # Radius lớn hơn cho single point (grid 16x16)
                 'used': False
             })
         return zones
@@ -172,7 +179,7 @@ def calculate_spawn_zones(rayline_points, num_zones=8):
 
         zones.append({
             'center': (wx, wy),
-            'radius': 3.0,  # Spawn trong bán kính 3 units
+            'radius': 6.0,  # Tăng lên 6.0 cho grid 16x16 (world range -8 to +8)
             'used': False
         })
 
@@ -231,10 +238,10 @@ def is_valid_spawn_position(world_x, world_y, container_cols, container_rows,
         (world_x + container_w_world/2, world_y + container_h_world/2),  # Center
     ]
 
-    # Tất cả các điểm phải cách rayline ít nhất 2 units
+    # Tất cả các điểm phải cách rayline ít nhất 2.5 units (tăng từ 2.0)
     for px, py in check_points:
         min_dist = calculate_min_distance_to_rayline(px, py, rayline_points)
-        if min_dist < 2.0:
+        if min_dist < 2.5:
             return False
 
     # Convert world to screen
@@ -246,11 +253,13 @@ def is_valid_spawn_position(world_x, world_y, container_cols, container_rows,
     container_h = container_rows * CELL_SIZE
 
     # Check 2: Overlap với containers khác trong cùng layer
+    # Thêm buffer 20px để containers cách nhau xa hơn
+    BUFFER = 20
     new_rect = {
-        'x': screen_x,
-        'y': screen_y,
-        'w': container_w,
-        'h': container_h
+        'x': screen_x - BUFFER,
+        'y': screen_y - BUFFER,
+        'w': container_w + BUFFER * 2,
+        'h': container_h + BUFFER * 2
     }
 
     for ct in existing_containers:
@@ -258,10 +267,10 @@ def is_valid_spawn_position(world_x, world_y, container_cols, container_rows,
             continue
 
         ct_rect = {
-            'x': ct.x,
-            'y': ct.y,
-            'w': ct.cols * CELL_SIZE * 2 + 40,
-            'h': ct.rows * CELL_SIZE
+            'x': ct.x - BUFFER,
+            'y': ct.y - BUFFER,
+            'w': ct.cols * CELL_SIZE * 2 + 40 + BUFFER * 2,
+            'h': ct.rows * CELL_SIZE + BUFFER * 2
         }
 
         if check_rect_overlap(new_rect, ct_rect):
@@ -299,9 +308,9 @@ def find_spawn_position_near_zone(zone, container_cols, container_rows,
         (screen_x, screen_y, world_x, world_y) hoặc None nếu không tìm được
     """
     for _ in range(max_attempts):
-        # Random offset từ center
+        # Random offset từ center (tăng min radius từ 2.5 lên 3.0)
         angle = random.uniform(0, 2 * math.pi)
-        radius = random.uniform(2.5, zone['radius'])
+        radius = random.uniform(3.0, zone['radius'])
 
         world_x = zone['center'][0] + radius * math.cos(angle)
         world_y = zone['center'][1] + radius * math.sin(angle)
