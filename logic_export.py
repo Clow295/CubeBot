@@ -1,7 +1,4 @@
-﻿
-
-
-import os, json, uuid, time, pygame
+﻿import os, json, uuid, time, pygame
 from config import *
 from logic_core import state
 
