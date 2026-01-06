@@ -177,11 +177,48 @@ Xáo trộn level với tỷ lệ điều chỉnh được
 - Cross-layer shuffle
 - Preserve clustering pattern
 
+#### 8. `fill_layers()`
+Fill blocks cho selected layers (basic version)
+- Tính demand dựa trên room available (global stats)
+- Fill với clustering, tránh trùng màu target
+- Có thể để trống ô nếu không tìm được slot phù hợp
+- Sử dụng find_best_slot_for_clustering()
+
+#### 9. `fill_layers_advance()` (NEW)
+Fill blocks cho selected layers (advanced version với exact matching)
+- **Phase 1**: Count exact demand per color trong layer
+  - `layer_target_count = {color: count}` - đếm target colors
+  - `layer_block_count = {color: count}` - đếm block colors hiện tại
+  - `exact_demand = target - block` cho mỗi màu
+- **Phase 2**: Fill với clustering (ideal)
+  - Fill theo exact_demand, ưu tiên clustering
+  - Tránh trùng màu với target position
+  - Update exact_demand sau mỗi lần fill
+- **Phase 3**: Find remaining empty slots và remaining demand
+- **Phase 4**: Force fill exact demand
+  - Build list màu cần fill (exact count)
+  - Sort slots ưu tiên (prefer non-matching)
+  - Fill chính xác từng màu vào slot thích hợp
+  - Cho phép fill trùng target nếu cần (fallback)
+- **Phase 5**: Verify color balance
+  - Re-count blocks sau fill
+  - Check: block_count == target_count cho mỗi màu
+  - Message: `✓ exact match` hoặc `⚠ may need adjustment`
+- **Đảm bảo**: Không có ô trống, số lượng màu chính xác 100%
+
+#### 10. `find_best_color_for_slot()`
+Helper function cho fill_layers_advance()
+- Tìm màu tối ưu cho slot dựa trên strategy priority
+- Respect constraints: max_same_color, max_types
+- Balance color distribution
+
 **Helper Functions:**
 - `global_stats()`: Thống kê target/block colors toàn level
 - `layout()`: Tính toán layout position cho các trays
 - `save_undo()`/`undo()`: Undo/redo system (20 levels)
 - `fill_n()`: Fill N blocks cùng màu vào selected trays
+- `fill_same()`: Reset cells to match targets exactly
+- `fix_color()`: Fix color issues in containers
 
 ### 4. logic_rayline.py - Rayline/Conveyor System
 
@@ -404,7 +441,13 @@ Main Loop
 - **Fill Same (Green button)**: Điền target color vào empty cells
 - **Fill N (1-6)**: Điền N blocks cùng màu vào tray đã chọn
 - **Auto Fill (Cluster)**: Tự động điền theo mismatch với clustering
-- **Fill Layers**: Điền cho selected layers
+- **Fill Layers**: Điền cho selected layers với clustering, có thể để trống ô nếu không tìm được slot phù hợp
+- **Fill Layer Advance (NEW)**: Phiên bản nâng cấp của Fill Layers
+  - Đảm bảo 100% số lượng block mỗi màu = số lượng target mỗi màu
+  - Không để trống ô nào (bắt buộc fill hết)
+  - Ưu tiên clustering và tránh trùng màu với target position
+  - Smart fallback: cho phép fill trùng target nếu cần để đảm bảo exact match
+  - Message: `✓ exact match` khi thành công
 - **Fill All**: Điền toàn bộ level
 - **Fix Color**: Sửa color issues
 
@@ -694,14 +737,151 @@ CHECK:
 
 ---
 
+## Fill Layer Advance Technical Details
+
+### Algorithm Overview
+Fill Layer Advance sử dụng thuật toán 5-phase để đảm bảo exact color matching:
+
+### Phase 1: Count Exact Demand
+```python
+# Đếm target colors trong layer
+layer_target_count = {}
+for container in selected_layers:
+    for cell in container.target:
+        layer_target_count[color] += 1
+
+# Đếm block colors hiện tại
+layer_block_count = {}
+for container in selected_layers:
+    for cell in container.cells:
+        if cell is not None:
+            layer_block_count[color] += 1
+
+# Tính exact demand
+exact_demand = {}
+for color, target_count in layer_target_count.items():
+    current_count = layer_block_count.get(color, 0)
+    need = target_count - current_count
+    if need > 0:
+        exact_demand[color] = need
+```
+
+### Phase 2: Fill with Clustering (Ideal)
+```python
+# Fill theo exact_demand, ưu tiên clustering
+for color, count in sorted(exact_demand.items()):
+    for _ in range(count):
+        slot = find_best_slot_for_clustering(containers, color)
+        if slot and slot.target_color != color:
+            fill(slot, color)
+            exact_demand[color] -= 1
+```
+
+**Clustering Priority:**
+1. Slots có adjacent cùng màu (clustering)
+2. Slots không có adjacent
+3. Skip nếu target_color == color (tránh trùng)
+
+### Phase 3: Find Remaining
+```python
+# Tìm ô trống còn lại
+empty_slots = []
+for container in containers:
+    for cell in container:
+        if cell is None:
+            empty_slots.append(cell)
+
+# Lọc exact_demand còn lại
+exact_demand = {color: count for color, count in exact_demand.items() if count > 0}
+```
+
+### Phase 4: Force Fill Exact Demand
+```python
+# Build list màu cần fill (exact count)
+colors_to_fill = []
+for color, count in exact_demand.items():
+    colors_to_fill.extend([color] * count)
+
+# Sort slots by priority
+empty_slots_sorted = []
+for slot in empty_slots:
+    # Priority 0: slots có thể fill không trùng target
+    # Priority 1: slots khác
+    priority = 0 if slot.can_fill_without_match(colors_to_fill) else 1
+    empty_slots_sorted.append((priority, slot))
+
+empty_slots_sorted.sort()
+
+# Fill từng màu vào slot thích hợp
+for color in colors_to_fill:
+    # Try find slot where color != target (ideal)
+    best_slot = find_slot_not_matching(empty_slots_sorted, color)
+
+    # Fallback: use any slot (allow matching)
+    if not best_slot:
+        best_slot = empty_slots_sorted[0]
+
+    fill(best_slot, color)
+    remove_from_list(empty_slots_sorted, best_slot)
+```
+
+### Phase 5: Verify Balance
+```python
+# Re-count blocks sau fill
+final_block_count = {}
+for container in containers:
+    for cell in container.cells:
+        if cell is not None:
+            final_block_count[color] += 1
+
+# Check balance
+is_balanced = True
+for color, target_count in layer_target_count.items():
+    block_count = final_block_count.get(color, 0)
+    if target_count != block_count:
+        is_balanced = False
+        break
+
+# Message
+if is_balanced:
+    "Fill Advance: X filled (✓ exact match)"
+else:
+    "Fill Advance: X filled (⚠ may need adjustment)"
+```
+
+### Guarantees
+```
+✓ Số lượng block mỗi màu = Số lượng target mỗi màu (100%)
+✓ Không có ô trống (fill hết)
+✓ Ưu tiên clustering (adjacent colors)
+✓ Ưu tiên tránh trùng target position
+✓ Fallback: cho phép trùng target nếu cần để đảm bảo exact match
+```
+
+### Example
+```
+BEFORE:
+Target: Blue=15, Red=20, Green=10
+Blocks: Blue=12, Red=18, Green=8
+Empty slots: 7
+
+AFTER Fill Layer Advance:
+Blocks: Blue=15, Red=20, Green=10
+Empty slots: 0
+✓ exact match
+```
+
+---
+
 ## Kết Luận
 
 **CubeBot - Puzzle King** là một level editor chuyên nghiệp với:
 
 ✅ Giao diện trực quan với Pygame
-✅ Hệ thống Rayline/Conveyor hoàn chỉnh (NEW)
+✅ Hệ thống Rayline/Conveyor hoàn chỉnh
 ✅ Sequential spawn với spacing tự động
 ✅ Multi-layer ray system độc lập
+✅ Fill Layer Advance với exact color matching (NEW v2.1)
 ✅ Thuật toán thông minh: clustering, balancing, optimization
 ✅ Export seamless sang Unity
 ✅ Hỗ trợ symmetry, undo/redo
@@ -726,6 +906,18 @@ CHECK:
 
 ## Changelog
 
+### Version 2.1 (2026-01-06)
+- **NEW**: Fill Layer Advance - phiên bản nâng cấp của Fill Layers
+  - Đảm bảo 100% số lượng block mỗi màu = số lượng target mỗi màu
+  - Không để trống ô nào (bắt buộc fill hết)
+  - 5-phase algorithm với exact color matching
+  - Smart fallback strategies
+  - Verification và balance checking
+- **NEW**: find_best_color_for_slot() helper function
+- **NEW**: UI button "Fill Layer Advance" (màu cam)
+- **FIXED**: Vấn đề màu thừa/thiếu khi fill layers
+- **IMPROVED**: Fill mechanisms documentation
+
 ### Version 2.0 (2026-01-06)
 - **NEW**: Rayline/Conveyor System với Ray Editor modal
 - **NEW**: Sequential spawn on ray path
@@ -744,6 +936,6 @@ CHECK:
 
 ---
 
-**Phiên bản tài liệu:** 2.0
+**Phiên bản tài liệu:** 2.1
 **Ngày cập nhật:** 2026-01-06
 **Người tạo:** CubeBot Development Team
