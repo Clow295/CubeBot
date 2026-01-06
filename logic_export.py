@@ -63,16 +63,6 @@ def export_to_unity_json(filename="Level_0.json"):
 
     ex_slots, ex_colors, temp = [], [], []
 
-    # --- NEW: Generate ConveyorSegments ---
-    conveyor_segments = []
-    if state.rayline_enabled and state.rayline_points:
-        from logic_rayline import grid_to_world
-        for gx, gy in state.rayline_points:
-            wx, wy = grid_to_world(gx, gy)
-            conveyor_segments.append({
-                "Position": f"{int(wx)};{int(wy)}"
-            })
-
     for ct in state.containers:
         tid = gen_id()
         ux = ((ct.x - WIDTH / 2) / 100.0) * 2
@@ -114,7 +104,7 @@ def export_to_unity_json(filename="Level_0.json"):
         "AmountArrows": 8,
         "ArrowsOffset": 0.5,
         "ReverseDirection": False,
-        "ConveyorSegments": conveyor_segments,  # NEW: Rayline data
+        "ConveyorSegments": [],
         "ConveyorSlots": [],
         "CellBlocks": [t["data"] for t in temp],
         "CellSlots": ex_slots,
