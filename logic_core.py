@@ -581,13 +581,15 @@ def find_best_color_order(counts, positions, target_grid):
     """
     Find the best order to fill colors to minimize conflicts with target.
 
-    Strategy:
-    1. Separate colors into EVEN and ODD count groups
-    2. EVEN counts go first (fill rows completely with zigzag)
-    3. ODD counts go last (avoid fragmenting middle rows)
-    4. Within each group, try permutations to minimize conflicts
+    Strategy (SMART DECISION):
+    1. Try TWO strategies:
+       - Strategy A: Even colors first, odd colors last (good for zigzag)
+       - Strategy B: All permutations without even/odd constraint (optimal conflicts)
+    2. Compare conflicts:
+       - If Strategy A increases conflicts significantly (>threshold), use Strategy B
+       - Otherwise, use Strategy A (better for visual grouping)
 
-    If too many colors (>6 total), use greedy approach instead of brute force.
+    If too many colors (>6 total), use greedy approach with smart decision.
 
     Args:
         counts: Dict {color: count}
@@ -595,7 +597,7 @@ def find_best_color_order(counts, positions, target_grid):
         target_grid: Target grid
 
     Returns:
-        List of colors in optimal order (even colors first, odd colors last)
+        List of colors in optimal order
     """
     from itertools import permutations
 
@@ -605,29 +607,51 @@ def find_best_color_order(counts, positions, target_grid):
     even_colors = [c for c in colors if counts[c] % 2 == 0]
     odd_colors = [c for c in colors if counts[c] % 2 == 1]
 
-    # For small number of colors, try all permutations
+    # For small number of colors, try both strategies
     if len(colors) <= 6:
-        best_order = colors
-        best_conflicts = float('inf')
+        # STRATEGY A: Even first, odd last (restricted permutations)
+        best_order_even_first = None
+        best_conflicts_even_first = float('inf')
 
-        # Try permutations within each group
         even_perms = list(permutations(even_colors)) if even_colors else [[]]
         odd_perms = list(permutations(odd_colors)) if odd_colors else [[]]
 
         for even_perm in even_perms:
             for odd_perm in odd_perms:
-                # Combine: even colors first, then odd colors
                 full_order = list(even_perm) + list(odd_perm)
                 conflicts = count_conflicts_for_order(full_order, counts, positions, target_grid)
 
-                if conflicts < best_conflicts:
-                    best_conflicts = conflicts
-                    best_order = full_order
+                if conflicts < best_conflicts_even_first:
+                    best_conflicts_even_first = conflicts
+                    best_order_even_first = full_order
 
-        return best_order
+        # STRATEGY B: All permutations without constraint (optimal conflicts)
+        best_order_normal = None
+        best_conflicts_normal = float('inf')
+
+        for perm in permutations(colors):
+            conflicts = count_conflicts_for_order(perm, counts, positions, target_grid)
+
+            if conflicts < best_conflicts_normal:
+                best_conflicts_normal = conflicts
+                best_order_normal = list(perm)
+
+        # SMART DECISION: Compare strategies
+        # Threshold: acceptable increase in conflicts (configurable)
+        CONFLICT_THRESHOLD = 2  # Allow up to 2 more conflicts for even-first strategy
+
+        conflict_increase = best_conflicts_even_first - best_conflicts_normal
+
+        if conflict_increase > CONFLICT_THRESHOLD:
+            # Even-first increases conflicts too much → use normal strategy
+            return best_order_normal
+        else:
+            # Even-first is acceptable → use it for better visual grouping
+            return best_order_even_first
+
     else:
-        # For many colors, use greedy approach with even/odd priority
-        return greedy_color_order(counts, positions, target_grid)
+        # For many colors, use greedy approach with smart decision
+        return greedy_color_order_smart(counts, positions, target_grid)
 
 
 def count_conflicts_for_order(color_order, counts, positions, target_grid):
@@ -656,6 +680,86 @@ def count_conflicts_for_order(color_order, counts, positions, target_grid):
                 pos_idx += 1
 
     return conflicts
+
+
+def greedy_color_order_smart(counts, positions, target_grid):
+    """
+    Smart greedy approach with even/odd decision for many colors.
+
+    Strategy:
+    1. Try even-first greedy order
+    2. Try normal greedy order (no even/odd constraint)
+    3. Compare conflicts and choose better strategy
+
+    Args:
+        counts: Dict {color: count}
+        positions: List of (r, c) in zigzag order
+        target_grid: Target grid
+
+    Returns:
+        List of colors in smart greedy order
+    """
+    # Strategy A: Even-first greedy
+    order_even_first = greedy_color_order(counts, positions, target_grid)
+    conflicts_even_first = count_conflicts_for_order(order_even_first, counts, positions, target_grid)
+
+    # Strategy B: Normal greedy (no even/odd priority)
+    order_normal = greedy_color_order_no_priority(counts, positions, target_grid)
+    conflicts_normal = count_conflicts_for_order(order_normal, counts, positions, target_grid)
+
+    # Smart decision
+    CONFLICT_THRESHOLD = 2
+    conflict_increase = conflicts_even_first - conflicts_normal
+
+    if conflict_increase > CONFLICT_THRESHOLD:
+        return order_normal
+    else:
+        return order_even_first
+
+
+def greedy_color_order_no_priority(counts, positions, target_grid):
+    """
+    Greedy color order WITHOUT even/odd priority.
+    Simply picks color with minimum conflicts at each step.
+
+    Args:
+        counts: Dict {color: count}
+        positions: List of (r, c) in zigzag order
+        target_grid: Target grid
+
+    Returns:
+        List of colors in greedy order
+    """
+    remaining_colors = set(counts.keys())
+    order = []
+    pos_idx = 0
+
+    while remaining_colors:
+        best_color = None
+        best_conflicts = float('inf')
+
+        # Try each remaining color
+        for color in remaining_colors:
+            color_count = counts[color]
+            conflicts = 0
+
+            # Count conflicts if we place this color next
+            for i in range(color_count):
+                if pos_idx + i < len(positions):
+                    r, c = positions[pos_idx + i]
+                    if target_grid[r][c] == color:
+                        conflicts += 1
+
+            if conflicts < best_conflicts:
+                best_conflicts = conflicts
+                best_color = color
+
+        # Add best color to order
+        order.append(best_color)
+        remaining_colors.remove(best_color)
+        pos_idx += counts[best_color]
+
+    return order
 
 
 def greedy_color_order(counts, positions, target_grid):
