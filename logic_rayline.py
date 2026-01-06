@@ -322,3 +322,168 @@ def find_spawn_position_near_zone(zone, container_cols, container_rows,
             return (screen_x, screen_y, world_x, world_y)
 
     return None
+
+
+# ============================================
+# SEQUENTIAL SPAWN ON RAY (NEW)
+# ============================================
+
+def calculate_sequential_spawn_position(layer_ray_points, spawn_index, container_cols, container_rows,
+                                         existing_containers, current_layer, spacing=1.5):
+    """
+    Tính vị trí spawn tuần tự trên ray, cách đều nhau
+
+    Args:
+        layer_ray_points: List[(grid_x, grid_y)] - Ray points của layer
+        spawn_index: Index spawn hiện tại (0, 1, 2, ...)
+        container_cols, container_rows: Kích thước container
+        existing_containers: Danh sách containers
+        current_layer: Layer hiện tại
+        spacing: Khoảng cách giữa các container (world units), mặc định 1.5
+
+    Returns:
+        (screen_x, screen_y, world_x, world_y, new_index) hoặc None nếu hết chỗ
+    """
+    if not layer_ray_points:
+        return None
+
+    # Convert tất cả ray points sang world coords
+    ray_world_points = [grid_to_world(gx, gy) for gx, gy in layer_ray_points]
+
+    # Tính tổng chiều dài ray
+    total_length = 0.0
+    segment_lengths = [0.0]  # Cumulative lengths
+
+    for i in range(len(ray_world_points) - 1):
+        wx1, wy1 = ray_world_points[i]
+        wx2, wy2 = ray_world_points[i + 1]
+        segment_len = math.sqrt((wx2 - wx1)**2 + (wy2 - wy1)**2)
+        total_length += segment_len
+        segment_lengths.append(total_length)
+
+    # Nếu ray quá ngắn
+    if total_length < spacing:
+        # Chỉ spawn 1 container tại điểm đầu
+        if spawn_index > 0:
+            return None
+        wx, wy = ray_world_points[0]
+        if is_valid_spawn_on_ray(wx, wy, container_cols, container_rows,
+                                  existing_containers, current_layer):
+            screen_x = world_to_screen_x(wx)
+            screen_y = world_to_screen_y(wy)
+            return (screen_x, screen_y, wx, wy, 1)
+        return None
+
+    # Tính số vị trí spawn tối đa trên ray
+    max_positions = int(total_length / spacing) + 1
+
+    # Nếu spawn_index vượt quá, reset về 0
+    if spawn_index >= max_positions:
+        spawn_index = 0
+
+    # Tìm vị trí spawn tiếp theo (thử max 10 lần nếu vị trí hiện tại bị chặn)
+    for attempt in range(max_positions):
+        current_index = (spawn_index + attempt) % max_positions
+        target_distance = current_index * spacing
+
+        # Tìm segment chứa target_distance
+        segment_idx = 0
+        for i in range(len(segment_lengths) - 1):
+            if segment_lengths[i] <= target_distance < segment_lengths[i + 1]:
+                segment_idx = i
+                break
+
+        # Nếu ở segment cuối
+        if target_distance >= segment_lengths[-1]:
+            segment_idx = len(ray_world_points) - 2
+            target_distance = segment_lengths[-1]
+
+        # Tính vị trí trên segment
+        segment_start_dist = segment_lengths[segment_idx]
+        dist_in_segment = target_distance - segment_start_dist
+
+        wx1, wy1 = ray_world_points[segment_idx]
+        wx2, wy2 = ray_world_points[segment_idx + 1]
+
+        segment_len = math.sqrt((wx2 - wx1)**2 + (wy2 - wy1)**2)
+
+        if segment_len > 0:
+            t = dist_in_segment / segment_len
+            t = max(0.0, min(1.0, t))  # Clamp to [0, 1]
+        else:
+            t = 0.0
+
+        # Interpolate
+        wx = wx1 + t * (wx2 - wx1)
+        wy = wy1 + t * (wy2 - wy1)
+
+        # Kiểm tra vị trí hợp lệ (dùng validation cho spawn ON ray)
+        if is_valid_spawn_on_ray(wx, wy, container_cols, container_rows,
+                                  existing_containers, current_layer):
+            screen_x = world_to_screen_x(wx)
+            screen_y = world_to_screen_y(wy)
+            next_index = (current_index + 1) % max_positions
+            return (screen_x, screen_y, wx, wy, next_index)
+
+    # Không tìm được vị trí hợp lệ
+    return None
+
+
+def is_valid_spawn_on_ray(world_x, world_y, container_cols, container_rows,
+                           existing_containers, current_layer):
+    """
+    Kiểm tra vị trí spawn ON RAY có hợp lệ không
+
+    KHÁC với is_valid_spawn_position():
+    - KHÔNG CHECK distance from ray (vì spawn ĐÚNG trên ray)
+    - CHỈ check overlap và boundaries
+
+    Args:
+        world_x, world_y: Unity world coordinates
+        container_cols, container_rows: Kích thước container
+        existing_containers: Danh sách containers hiện có
+        current_layer: Layer hiện tại
+
+    Returns:
+        bool: True nếu hợp lệ
+    """
+    # Convert world to screen
+    screen_x = world_to_screen_x(world_x)
+    screen_y = world_to_screen_y(world_y)
+
+    # Container size in screen space
+    container_w = container_cols * CELL_SIZE * 2 + 40  # Full width including target
+    container_h = container_rows * CELL_SIZE
+
+    # Check 1: Overlap với containers khác trong cùng layer
+    # GIẢM BUFFER xuống 10px để spawn dễ dàng hơn
+    BUFFER = 10
+    new_rect = {
+        'x': screen_x - BUFFER,
+        'y': screen_y - BUFFER,
+        'w': container_w + BUFFER * 2,
+        'h': container_h + BUFFER * 2
+    }
+
+    for ct in existing_containers:
+        if ct.layer != current_layer:
+            continue
+
+        ct_rect = {
+            'x': ct.x - BUFFER,
+            'y': ct.y - BUFFER,
+            'w': ct.cols * CELL_SIZE * 2 + 40 + BUFFER * 2,
+            'h': ct.rows * CELL_SIZE + BUFFER * 2
+        }
+
+        if check_rect_overlap(new_rect, ct_rect):
+            return False
+
+    # Check 2: Boundaries (screen space)
+    # Đảm bảo container nằm trong gameplay area
+    if screen_x < MARGIN_X or screen_x + container_w > PANEL_RIGHT_X:
+        return False
+    if screen_y < MARGIN_Y or screen_y + container_h > HEIGHT - 50:
+        return False
+
+    return True

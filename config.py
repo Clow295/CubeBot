@@ -48,10 +48,11 @@ class State:
     shuffle_ratio = 50
     symmetry_mode = False  # <--- Mode đối xứng
 
-    # Rayline Data
-    rayline_enabled = False          # Toggle rayline on/off
-    rayline_points = []              # List of (grid_x, grid_y) tuples
-    rayline_edit_mode = False        # True khi đang vẽ rayline
+    # Layer Ray Data (mỗi layer có ray riêng)
+    layer_rays = {1: [], 2: [], 3: [], 4: [], 5: []}  # Ray cho từng layer
+    layer_ray_spawn_index = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}  # Index spawn hiện tại cho mỗi layer
+    rayline_edit_mode = False        # True khi đang vẽ ray
+    rayline_edit_layer = 1           # Layer đang vẽ ray (1-5)
     rayline_temp_drawing = []        # Temporary path khi đang drag
     rayline_is_drawing = False       # Flag cho mouse drag state
 
@@ -83,9 +84,9 @@ BTN_SIZE = 25
 
 BTN_X = PANEL_RIGHT_X + 20
 BTN_W = 240
-BTN_H = 35
+BTN_H = 32  # Giảm từ 35 xuống 32
 START_BTN_Y = 320
-SPACING_BTN = 45
+SPACING_BTN = 37  # Giảm từ 45 xuống 37 để tiết kiệm không gian
 
 # --- BUTTON RECTS ---
 FILL_SAME_BTN_RECT = pygame.Rect(BTN_X, START_BTN_Y, BTN_W, BTN_H)
@@ -118,6 +119,11 @@ RAYLINE_MODAL_Y = (HEIGHT - RAYLINE_MODAL_H) // 2
 
 RAYLINE_GRID_X = RAYLINE_MODAL_X + (RAYLINE_MODAL_W - RAYLINE_GRID_TOTAL) // 2
 RAYLINE_GRID_Y = RAYLINE_MODAL_Y + 80
+
+# Rayline layer selector
+RAYLINE_LAYER_Y = RAYLINE_GRID_Y - 40  # Phía trên grid
+RAYLINE_LAYER_BTN_W = 60
+RAYLINE_LAYER_BTN_H = 30
 
 # Rayline control buttons
 RAYLINE_BTN_W = 150

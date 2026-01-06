@@ -334,34 +334,52 @@ def find_contiguous_cluster_smart(rows, cols, mask, count, color, target_grid):
         # Sort: non-conflict first
         neighbor_scores.sort(key=lambda x: x[1])
 
+        # Add neighbors to queue - no limit needed here
+        # The while loop condition already ensures we stop when cluster is full
         for (nr, nc), _ in neighbor_scores:
-            if len(cluster) + len(queue) < count:
-                visited.add((nr, nc))
-                queue.append((nr, nc))
+            visited.add((nr, nc))
+            queue.append((nr, nc))
 
     # IMPORTANT: If BFS didn't find enough cells (disconnected areas),
-    # fill remaining with closest available cells
-    if len(cluster) < count:
-        # Find remaining available cells not yet in cluster
-        remaining_needed = count - len(cluster)
+    # GROW cluster step by step, adding cells adjacent to current cluster
+    # This ensures maximum contiguity
+    while len(cluster) < count:
         remaining_cells = [pos for pos in available_cells if pos not in visited]
 
-        # Sort by distance from existing cluster (prefer nearby cells)
-        if cluster:
-            cluster_center_r = sum(r for r, c in cluster) / len(cluster)
-            cluster_center_c = sum(c for r, c in cluster) / len(cluster)
+        if not remaining_cells:
+            break  # No more cells available
 
-            def distance_from_cluster(pos):
-                r, c = pos
-                dist = abs(r - cluster_center_r) + abs(c - cluster_center_c)
-                # Also consider conflict
-                conflict_penalty = 100 if target_grid[r][c] == color else 0
-                return dist + conflict_penalty
+        # Find cell with best priority score (adjacent to cluster preferred)
+        def priority_score(pos):
+            r, c = pos
 
-            remaining_cells.sort(key=distance_from_cluster)
+            # Check if this cell is adjacent to ANY cell in cluster
+            is_adjacent = False
+            for cr, cc in cluster:
+                if abs(r - cr) + abs(c - cc) == 1:  # Manhattan distance = 1 (neighbor)
+                    is_adjacent = True
+                    break
 
-        # Add remaining cells
-        cluster.extend(remaining_cells[:remaining_needed])
+            # If adjacent to cluster: score = 0 (highest priority)
+            # If not adjacent: score = min distance to cluster
+            if is_adjacent:
+                score = 0
+            else:
+                # Min Manhattan distance to any cluster cell
+                score = min(abs(r - cr) + abs(c - cc) for cr, cc in cluster) if cluster else 999
+
+            # Small conflict penalty (only as tiebreaker)
+            if target_grid[r][c] == color:
+                score += 0.5
+
+            return score
+
+        # Find best cell
+        best_cell = min(remaining_cells, key=priority_score)
+
+        # Add to cluster and mark as visited
+        cluster.append(best_cell)
+        visited.add(best_cell)
 
     return cluster
 
@@ -659,22 +677,25 @@ def sort_selected_trays(trays_to_sort):
 
 # --- SPAWN (SYMMETRY + RAYLINE) ---
 def spawn_new_trays():
-    """Spawn new trays with optional rayline constraint"""
+    """Spawn new trays with optional layer ray constraint"""
     master = Container(state.current_layer)
 
     # ============================================
     # SPAWN MASTER CONTAINER
     # ============================================
-    if state.rayline_enabled and state.rayline_points:
-        # Use rayline constraint spawn - containers spawn XUNG QUANH rayline
-        spawn_success = spawn_with_rayline_constraint(master)
+    # Kiểm tra layer hiện tại có ray không
+    current_layer_ray = state.layer_rays.get(state.current_layer, [])
+
+    if current_layer_ray:
+        # Use layer ray constraint spawn - containers spawn DỌC THEO ray
+        spawn_success = spawn_with_layer_ray_constraint(master)
         if not spawn_success:
             # KHÔNG FALLBACK VỀ LAYOUT - chỉ show message và return
-            state.last_action_message = "Spawn failed: No space around rayline"
+            state.last_action_message = f"Spawn failed: No space on Layer {state.current_layer} ray"
             return
-        # KHÔNG GỌI layout() - giữ nguyên position xung quanh rayline
+        # KHÔNG GỌI layout() - giữ nguyên position trên ray
     else:
-        # No rayline: append and layout theo grid
+        # No ray: append and layout theo grid
         state.containers.append(master)
         layout(state.containers)
 
@@ -700,70 +721,68 @@ def spawn_new_trays():
         slave = Container(state.current_layer, rows=slave_rows, cols=slave_cols, manual_target=slave_target)
 
         # Spawn slave
-        if state.rayline_enabled and state.rayline_points:
-            # Try spawn slave with rayline constraint
-            spawn_success = spawn_with_rayline_constraint(slave)
+        if current_layer_ray:
+            # Try spawn slave with layer ray constraint
+            spawn_success = spawn_with_layer_ray_constraint(slave)
             if not spawn_success:
                 # Fallback: spawn next to master
                 slave.x = master.x + master.cols * CELL_SIZE * 2 + 100
                 slave.y = master.y
                 state.containers.append(slave)
-            # KHÔNG GỌI layout() - giữ nguyên position xung quanh rayline
+            # KHÔNG GỌI layout() - giữ nguyên position trên ray
         else:
-            # No rayline: spawn next to master (master đã có position từ layout ở trên)
+            # No ray: spawn next to master (master đã có position từ layout ở trên)
             slave.x = master.x + master.cols * CELL_SIZE * 2 + 100
             slave.y = master.y
             state.containers.append(slave)
             # KHÔNG GỌI layout() - slave đã có position tương đối với master
 
-        state.last_action_message = "Spawned Pair" + (" (Rayline)" if state.rayline_enabled else "")
+        ray_msg = f" (Ray L{state.current_layer})" if current_layer_ray else ""
+        state.last_action_message = "Spawned Pair" + ray_msg
     else:
-        state.last_action_message = "Spawned Single" + (" (Rayline)" if state.rayline_enabled else "")
+        ray_msg = f" (Ray L{state.current_layer})" if current_layer_ray else ""
+        state.last_action_message = "Spawned Single" + ray_msg
 
 
-def spawn_with_rayline_constraint(container):
+def spawn_with_layer_ray_constraint(container):
     """
-    Spawn container với rayline constraint
+    Spawn container dọc theo ray của layer hiện tại, cách đều 2 units
     Returns True nếu spawn thành công, False nếu không tìm được vị trí hợp lệ
     """
-    from logic_rayline import calculate_spawn_zones, find_spawn_position_near_zone
+    from logic_rayline import calculate_sequential_spawn_position
 
-    # Calculate spawn zones (tăng từ 8 lên 24 zones để spawn nhiều containers hơn)
-    zones = calculate_spawn_zones(state.rayline_points, num_zones=24)
+    # Lấy ray của layer hiện tại
+    current_layer_ray = state.layer_rays.get(state.current_layer, [])
 
-    if not zones:
+    if not current_layer_ray:
         return False
 
-    # Random chọn zone chưa dùng
-    import random
-    available_zones = [z for z in zones if not z['used']]
-    if not available_zones:
-        # Reset all zones
-        for z in zones:
-            z['used'] = False
-        available_zones = zones
+    # Lấy spawn index hiện tại của layer
+    spawn_index = state.layer_ray_spawn_index.get(state.current_layer, 0)
 
-    # Shuffle zones để random
-    random.shuffle(available_zones)
+    # Tìm vị trí spawn tuần tự trên ray
+    result = calculate_sequential_spawn_position(
+        current_layer_ray,
+        spawn_index,
+        container.cols,
+        container.rows,
+        state.containers,
+        state.current_layer,
+        spacing=1.5  # Cách nhau 1.5 units (giảm để spawn dễ dàng hơn)
+    )
 
-    # Thử tìm vị trí hợp lệ ở các zones
-    for zone in available_zones:
-        result = find_spawn_position_near_zone(
-            zone, container.cols, container.rows,
-            state.rayline_points, state.containers, state.current_layer,
-            max_attempts=100  # Tăng từ 30 lên 100 để tìm vị trí tốt hơn
-        )
+    if result:
+        screen_x, screen_y, world_x, world_y, next_index = result
+        container.x = int(screen_x)
+        container.y = int(screen_y)
+        # Store world coordinates (optional, for future use)
+        container.world_x = world_x
+        container.world_y = world_y
+        state.containers.append(container)
 
-        if result:
-            screen_x, screen_y, world_x, world_y = result
-            container.x = int(screen_x)
-            container.y = int(screen_y)
-            # Store world coordinates (optional, for future use)
-            container.world_x = world_x
-            container.world_y = world_y
-            state.containers.append(container)
-            zone['used'] = True
-            return True
+        # Update spawn index cho lần spawn tiếp theo
+        state.layer_ray_spawn_index[state.current_layer] = next_index
+        return True
 
     return False
 

@@ -42,28 +42,49 @@ while running:
         if e.type == pygame.MOUSEBUTTONDOWN:
             mx, my = pygame.mouse.get_pos()
 
-            # --- RAYLINE MODAL HANDLING ---
+            # --- RAY MODAL HANDLING ---
             if state.rayline_edit_mode:
+                # Check layer selector buttons
+                layer_selected = False
+                start_x = RAYLINE_GRID_X + 120
+                for i in range(5):
+                    layer_num = i + 1
+                    btn_x = start_x + i * (RAYLINE_LAYER_BTN_W + 10)
+                    btn_rect = pygame.Rect(btn_x, RAYLINE_LAYER_Y, RAYLINE_LAYER_BTN_W, RAYLINE_LAYER_BTN_H)
+                    if btn_rect.collidepoint(mx, my):
+                        # Switch to editing different layer
+                        state.rayline_edit_layer = layer_num
+                        # Load ray của layer này vào temp drawing
+                        state.rayline_temp_drawing = state.layer_rays.get(layer_num, [])[:]
+                        state.last_action_message = f"Editing Layer {layer_num} Ray"
+                        layer_selected = True
+                        break
+
+                if layer_selected:
+                    continue
+
                 # Check button clicks
                 if RAYLINE_SAVE_BTN.collidepoint(mx, my):
-                    # Save rayline
-                    state.rayline_points = state.rayline_temp_drawing[:]
-                    state.rayline_enabled = len(state.rayline_points) > 0
-                    state.last_action_message = f"Rayline Saved ({len(state.rayline_points)} pts)"
+                    # Save ray vào layer đang edit
+                    state.layer_rays[state.rayline_edit_layer] = state.rayline_temp_drawing[:]
+                    # Reset spawn index của layer này
+                    state.layer_ray_spawn_index[state.rayline_edit_layer] = 0
+                    state.last_action_message = f"Layer {state.rayline_edit_layer} Ray Saved ({len(state.rayline_temp_drawing)} pts)"
                     continue
 
                 if RAYLINE_CLEAR_BTN.collidepoint(mx, my):
-                    # Clear rayline
-                    state.rayline_points = []
+                    # Clear ray của layer đang edit
+                    state.layer_rays[state.rayline_edit_layer] = []
                     state.rayline_temp_drawing = []
-                    state.rayline_enabled = False
-                    state.last_action_message = "Rayline Cleared"
+                    state.layer_ray_spawn_index[state.rayline_edit_layer] = 0
+                    state.last_action_message = f"Layer {state.rayline_edit_layer} Ray Cleared"
                     continue
 
                 if RAYLINE_CLOSE_BTN.collidepoint(mx, my):
                     # Close modal
                     state.rayline_edit_mode = False
-                    state.rayline_temp_drawing = state.rayline_points[:]
+                    # Reload ray của layer đang edit
+                    state.rayline_temp_drawing = state.layer_rays.get(state.rayline_edit_layer, [])[:]
                     continue
 
                 # Check grid click - start drawing
@@ -224,14 +245,17 @@ while running:
                 if e.key == pygame.K_COMMA: state.max_same_color = max(1, state.max_same_color - 1)
                 if e.key == pygame.K_PERIOD: state.max_same_color = min(10, state.max_same_color + 1)
 
-                # Rayline editor shortcut
+                # Ray editor shortcut
                 if e.key == pygame.K_r:
                     state.rayline_edit_mode = not state.rayline_edit_mode
                     if state.rayline_edit_mode:
-                        state.rayline_temp_drawing = state.rayline_points[:]
-                        state.last_action_message = "Rayline Editor Opened"
+                        # Set edit layer to current layer
+                        state.rayline_edit_layer = state.current_layer
+                        # Load ray của layer hiện tại vào temp drawing
+                        state.rayline_temp_drawing = state.layer_rays.get(state.current_layer, [])[:]
+                        state.last_action_message = f"Ray Editor Opened (Layer {state.current_layer})"
                     else:
-                        state.last_action_message = "Rayline Editor Closed"
+                        state.last_action_message = "Ray Editor Closed"
 
     draw_stats(SCREEN)
     draw_table(SCREEN)

@@ -113,38 +113,83 @@ def draw_right_panel(screen):
 
 
 def draw_instruction(screen):
-    ins = ["Space:Spawn", "1-6:Fill N", "P:Paint Mode", "0-9:Paint Block", "Alt+0-9:Target", "T:Swap", "S:Shuffle",
-           "U:Undo", "D:Del", "E:Export", "R:Rayline Editor"]
-    start_y = RATIO_LABEL_Y + 60
+    ins = ["Space:Spawn", "1-6:Fill N", "P:Paint", "0-9:Paint Blk", "Alt+0-9:Target",
+           "T:Swap", "S:Shuffle", "U:Undo", "D:Del", "E:Export", "R:Ray Editor"]
+    start_y = RATIO_LABEL_Y + 50  # Giảm từ 60 xuống 50
     for k, t in enumerate(ins):
-        col = (0, 255, 255) if t == "R:Rayline Editor" and state.rayline_enabled else (200, 200, 200)
-        screen.blit(pygame.font.SysFont(None, 18).render(t, 1, col), (PANEL_RIGHT_X + 20, start_y + k * 18))
+        col = (200, 200, 200)
+        # Compact: dùng font size 16 thay vì 18
+        screen.blit(pygame.font.SysFont(None, 16).render(t, 1, col), (PANEL_RIGHT_X + 20, start_y + k * 16))
 
 
 def draw_gameplay(screen):
-    # Vẽ rayline trong gameplay area (nếu enabled)
-    if state.rayline_enabled and state.rayline_points:
-        from logic_rayline import grid_to_world, world_to_screen_x, world_to_screen_y
+    # Vẽ rays của tất cả layers (với màu khác nhau)
+    from logic_rayline import grid_to_world, world_to_screen_x, world_to_screen_y
 
-        # Vẽ rayline path với màu mờ
-        for i in range(len(state.rayline_points)):
-            gx, gy = state.rayline_points[i]
+    # Màu cho từng layer
+    layer_colors = [
+        (255, 100, 100),  # Layer 1: Red
+        (100, 255, 100),  # Layer 2: Green
+        (100, 100, 255),  # Layer 3: Blue
+        (255, 255, 100),  # Layer 4: Yellow
+        (255, 100, 255),  # Layer 5: Magenta
+    ]
+
+    # Vẽ ray của layer hiện tại (đậm hơn)
+    current_ray = state.layer_rays.get(state.current_layer, [])
+    if current_ray:
+        color = layer_colors[state.current_layer - 1]
+        for i in range(len(current_ray)):
+            gx, gy = current_ray[i]
             wx, wy = grid_to_world(gx, gy)
             sx = world_to_screen_x(wx)
             sy = world_to_screen_y(wy)
 
             # Vẽ circle tại mỗi điểm
-            pygame.draw.circle(screen, (100, 200, 255), (int(sx), int(sy)), 8, 3)
+            pygame.draw.circle(screen, color, (int(sx), int(sy)), 8, 3)
 
             # Vẽ line nối giữa các điểm
             if i > 0:
-                prev_gx, prev_gy = state.rayline_points[i-1]
+                prev_gx, prev_gy = current_ray[i-1]
                 prev_wx, prev_wy = grid_to_world(prev_gx, prev_gy)
                 prev_sx = world_to_screen_x(prev_wx)
                 prev_sy = world_to_screen_y(prev_wy)
-                pygame.draw.line(screen, (100, 200, 255),
+                pygame.draw.line(screen, color,
                                (int(prev_sx), int(prev_sy)),
                                (int(sx), int(sy)), 4)
+
+    # Vẽ rays của các layer khác (mờ hơn) nếu checkbox enabled
+    for layer_idx in range(5):
+        layer_num = layer_idx + 1
+        if layer_num == state.current_layer:
+            continue  # Đã vẽ ở trên
+        if not state.layer_checkbox[layer_idx]:
+            continue  # Checkbox không enabled
+
+        layer_ray = state.layer_rays.get(layer_num, [])
+        if layer_ray:
+            color = layer_colors[layer_idx]
+            # Màu mờ hơn (alpha effect bằng cách giảm độ sáng)
+            faded_color = tuple(c // 2 for c in color)
+
+            for i in range(len(layer_ray)):
+                gx, gy = layer_ray[i]
+                wx, wy = grid_to_world(gx, gy)
+                sx = world_to_screen_x(wx)
+                sy = world_to_screen_y(wy)
+
+                # Vẽ circle nhỏ hơn
+                pygame.draw.circle(screen, faded_color, (int(sx), int(sy)), 5, 2)
+
+                # Vẽ line mỏng hơn
+                if i > 0:
+                    prev_gx, prev_gy = layer_ray[i-1]
+                    prev_wx, prev_wy = grid_to_world(prev_gx, prev_gy)
+                    prev_sx = world_to_screen_x(prev_wx)
+                    prev_sy = world_to_screen_y(prev_wy)
+                    pygame.draw.line(screen, faded_color,
+                                   (int(prev_sx), int(prev_sy)),
+                                   (int(sx), int(sy)), 2)
 
     # Vẽ containers
     vis = [c for c in state.containers if c.layer == state.current_layer]
@@ -176,7 +221,7 @@ def draw_gameplay(screen):
 # ============================================
 
 def draw_rayline_modal(screen):
-    """Vẽ rayline editor modal"""
+    """Vẽ ray editor modal"""
     # Dim background
     overlay = pygame.Surface((WIDTH, HEIGHT))
     overlay.set_alpha(180)
@@ -190,9 +235,12 @@ def draw_rayline_modal(screen):
 
     # Title
     title_font = pygame.font.SysFont(None, 36)
-    title_text = title_font.render("RAYLINE EDITOR", True, TEXT_WHITE)
+    title_text = title_font.render("RAY EDITOR", True, TEXT_WHITE)
     title_x = RAYLINE_MODAL_X + (RAYLINE_MODAL_W - title_text.get_width()) // 2
     screen.blit(title_text, (title_x, RAYLINE_MODAL_Y + 20))
+
+    # Draw layer selector
+    draw_rayline_layer_selector(screen)
 
     # Draw grid
     draw_rayline_grid(screen)
@@ -204,14 +252,51 @@ def draw_rayline_modal(screen):
     draw_rayline_controls(screen)
 
     # Status text
-    num_points = len(state.rayline_temp_drawing) if state.rayline_is_drawing else len(state.rayline_points)
-    status_text = f"Points: {num_points}"
-    if state.rayline_enabled:
-        status_text += " | Rayline ENABLED"
+    current_ray = state.layer_rays.get(state.rayline_edit_layer, [])
+    num_points = len(state.rayline_temp_drawing) if state.rayline_is_drawing else len(current_ray)
+    status_text = f"Layer {state.rayline_edit_layer} | Points: {num_points}"
 
     status_font = pygame.font.SysFont(None, 24)
     status_surface = status_font.render(status_text, True, (200, 200, 200))
     screen.blit(status_surface, (RAYLINE_MODAL_X + 20, RAYLINE_BTN_Y + 50))
+
+
+def draw_rayline_layer_selector(screen):
+    """Vẽ layer selector (5 buttons)"""
+    font = pygame.font.SysFont(None, 22)
+    label_text = font.render("Select Layer:", True, TEXT_WHITE)
+    screen.blit(label_text, (RAYLINE_GRID_X, RAYLINE_LAYER_Y))
+
+    # Màu cho từng layer
+    layer_colors = [
+        (255, 100, 100),  # Layer 1: Red
+        (100, 255, 100),  # Layer 2: Green
+        (100, 100, 255),  # Layer 3: Blue
+        (255, 255, 100),  # Layer 4: Yellow
+        (255, 100, 255),  # Layer 5: Magenta
+    ]
+
+    start_x = RAYLINE_GRID_X + 120
+    for i in range(5):
+        layer_num = i + 1
+        btn_x = start_x + i * (RAYLINE_LAYER_BTN_W + 10)
+        btn_rect = pygame.Rect(btn_x, RAYLINE_LAYER_Y, RAYLINE_LAYER_BTN_W, RAYLINE_LAYER_BTN_H)
+
+        # Highlight nếu đang chọn
+        if layer_num == state.rayline_edit_layer:
+            pygame.draw.rect(screen, layer_colors[i], btn_rect)
+            pygame.draw.rect(screen, TEXT_WHITE, btn_rect, 3)
+        else:
+            # Màu mờ hơn
+            faded = tuple(c // 2 for c in layer_colors[i])
+            pygame.draw.rect(screen, faded, btn_rect)
+            pygame.draw.rect(screen, (150, 150, 150), btn_rect, 1)
+
+        # Label
+        text = font.render(f"L{layer_num}", True, TEXT_WHITE)
+        text_x = btn_x + (RAYLINE_LAYER_BTN_W - text.get_width()) // 2
+        text_y = RAYLINE_LAYER_Y + (RAYLINE_LAYER_BTN_H - text.get_height()) // 2
+        screen.blit(text, (text_x, text_y))
 
 
 def draw_rayline_grid(screen):
@@ -250,13 +335,12 @@ def draw_rayline_grid(screen):
 
 
 def draw_rayline_path(screen):
-    """Vẽ rayline path"""
-    # Vẽ temp drawing khi đang trong edit mode (hiển thị ngay khi vẽ)
-    # Nếu không trong edit mode, vẽ saved path
-    if state.rayline_edit_mode:
+    """Vẽ ray path của layer đang edit"""
+    # Vẽ temp drawing nếu đang vẽ, nếu không vẽ saved ray của layer
+    if state.rayline_is_drawing and state.rayline_temp_drawing:
         points_to_draw = state.rayline_temp_drawing
     else:
-        points_to_draw = state.rayline_points
+        points_to_draw = state.layer_rays.get(state.rayline_edit_layer, [])
 
     if len(points_to_draw) < 1:
         return
