@@ -329,7 +329,7 @@ def find_spawn_position_near_zone(zone, container_cols, container_rows,
 # ============================================
 
 def calculate_sequential_spawn_position(layer_ray_points, spawn_index, container_cols, container_rows,
-                                         existing_containers, current_layer, spacing=1.5):
+                                         existing_containers, current_layer, spacing=2.0):
     """
     Tính vị trí spawn tuần tự trên ray, cách đều nhau
 
@@ -339,7 +339,7 @@ def calculate_sequential_spawn_position(layer_ray_points, spawn_index, container
         container_cols, container_rows: Kích thước container
         existing_containers: Danh sách containers
         current_layer: Layer hiện tại
-        spacing: Khoảng cách giữa các container (world units), mặc định 1.5
+        spacing: Khoảng cách giữa các container (world units), mặc định 2.0
 
     Returns:
         (screen_x, screen_y, world_x, world_y, new_index) hoặc None nếu hết chỗ

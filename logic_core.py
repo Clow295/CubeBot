@@ -768,7 +768,7 @@ def spawn_with_layer_ray_constraint(container):
         container.rows,
         state.containers,
         state.current_layer,
-        spacing=1.5  # Cách nhau 1.5 units (giảm để spawn dễ dàng hơn)
+        spacing=2.0  # Cách nhau 2 units
     )
 
     if result:
