@@ -141,6 +141,30 @@ RAYLINE_GRID_LINE = (100, 100, 100)
 RAYLINE_PATH_COLOR = (0, 255, 255)  # Cyan
 RAYLINE_HOVER_COLOR = (100, 150, 100)
 
+# --- RAY & SPAWN TUNING PARAMETERS ---
+# Đây là các tham số để tùy chỉnh hệ thống ray và spawn
+
+# Grid và World Coordinates
+RAY_GRID_CENTER = 7.5               # Center của grid 16x16 (vì index từ 0-15)
+RAY_WORLD_RANGE = 8.0               # World range từ -8 đến +8
+
+# Coordinate Conversion (World ↔ Screen)
+RAY_WORLD_TO_SCREEN_SCALE = 100.0   # Scale factor: 100 pixels = 2 world units
+RAY_WORLD_TO_SCREEN_FACTOR = 2.0    # Division factor cho world units
+RAY_PIXEL_TO_WORLD = 0.02           # 1 pixel = 0.02 world units (1/50)
+
+# Spawn Parameters (CÁC THAM SỐ CHÍNH ĐỂ TINH CHỈNH)
+RAY_SPAWN_SPACING = 2.0             # Khoảng cách giữa các container trên ray (world units)
+                                    # Tăng = containers cách xa hơn, giảm = gần hơn
+RAY_SPAWN_BUFFER = 10               # Buffer khi check overlap giữa containers (pixels)
+                                    # Tăng = cần nhiều khoảng trống hơn, giảm = spawn dễ hơn
+
+# Old Validation Parameters (không dùng cho spawn on ray nữa, giữ lại cho reference)
+RAY_MIN_DISTANCE_OLD = 0.8          # Min distance từ rayline (cũ - spawn xung quanh)
+RAY_OLD_BUFFER = 20                 # Buffer overlap cũ (cũ)
+RAY_ZONE_RADIUS = 6.0               # Radius của spawn zones (cũ)
+RAY_ZONE_RANDOM_MIN = 1.5           # Min random offset từ zone center (cũ)
+
 
 def generate_id(counter):
     counter[0] += 1

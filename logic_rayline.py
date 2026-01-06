@@ -23,10 +23,10 @@ def grid_to_world(grid_x, grid_y):
     World: (-8,8) top-left đến (8,-8) bottom-right (Y+ up)
 
     NOTE: Y axis đảo ngược vì grid Y+ down, world Y+ up
-    Grid size: 16x16 → center at 7.5
+    Grid size: 16x16 → center at RAY_GRID_CENTER
     """
-    world_x = (grid_x - 7.5) * 1.0  # Center at 7.5 cho grid 16x16
-    world_y = (7.5 - grid_y) * 1.0  # ĐẢO NGƯỢC Y
+    world_x = (grid_x - RAY_GRID_CENTER) * 1.0
+    world_y = (RAY_GRID_CENTER - grid_y) * 1.0  # ĐẢO NGƯỢC Y
     return (world_x, world_y)
 
 
@@ -34,10 +34,10 @@ def world_to_grid(world_x, world_y):
     """
     Convert Unity world coordinate to grid
     NOTE: Y axis đảo ngược
-    Grid 16x16 → center at 7.5
+    Grid 16x16 → center at RAY_GRID_CENTER
     """
-    grid_x = int(round(world_x + 7.5))  # Center at 7.5 cho grid 16x16
-    grid_y = int(round(7.5 - world_y))  # ĐẢO NGƯỢC Y
+    grid_x = int(round(world_x + RAY_GRID_CENTER))
+    grid_y = int(round(RAY_GRID_CENTER - world_y))  # ĐẢO NGƯỢC Y
     # Clamp to grid bounds
     grid_x = max(0, min(RAYLINE_GRID_SIZE - 1, grid_x))
     grid_y = max(0, min(RAYLINE_GRID_SIZE - 1, grid_y))
@@ -47,29 +47,27 @@ def world_to_grid(world_x, world_y):
 def world_to_screen_x(world_x):
     """
     Convert Unity world X to Pygame screen X
-    Inverse of export formula: ux = ((ct.x - WIDTH/2) / 100.0) * 2
-    → ct.x = (ux / 2) * 100.0 + WIDTH/2
+    Formula: screen_x = (world_x / FACTOR) * SCALE + WIDTH/2
     """
-    return (world_x / 2.0) * 100.0 + WIDTH / 2
+    return (world_x / RAY_WORLD_TO_SCREEN_FACTOR) * RAY_WORLD_TO_SCREEN_SCALE + WIDTH / 2
 
 
 def world_to_screen_y(world_y):
     """
     Convert Unity world Y to Pygame screen Y
-    Inverse of: uy = (-(ct.y - HEIGHT/2) / 100.0) * 2
-    → ct.y = -uy / 2 * 100.0 + HEIGHT/2
+    Formula: screen_y = (-world_y / FACTOR) * SCALE + HEIGHT/2
     """
-    return (-world_y / 2.0) * 100.0 + HEIGHT / 2
+    return (-world_y / RAY_WORLD_TO_SCREEN_FACTOR) * RAY_WORLD_TO_SCREEN_SCALE + HEIGHT / 2
 
 
 def screen_to_world_x(screen_x):
     """Convert Pygame screen X to Unity world X"""
-    return ((screen_x - WIDTH / 2) / 100.0) * 2.0
+    return ((screen_x - WIDTH / 2) / RAY_WORLD_TO_SCREEN_SCALE) * RAY_WORLD_TO_SCREEN_FACTOR
 
 
 def screen_to_world_y(screen_y):
     """Convert Pygame screen Y to Unity world Y"""
-    return (-(screen_y - HEIGHT / 2) / 100.0) * 2.0
+    return (-(screen_y - HEIGHT / 2) / RAY_WORLD_TO_SCREEN_SCALE) * RAY_WORLD_TO_SCREEN_FACTOR
 
 
 # ============================================
@@ -161,7 +159,7 @@ def calculate_spawn_zones(rayline_points, num_zones=8):
             wx, wy = grid_to_world(gx, gy)
             zones.append({
                 'center': (wx, wy),
-                'radius': 5.0,  # Radius lớn hơn cho single point (grid 16x16)
+                'radius': RAY_ZONE_RADIUS,  # Radius cho single point
                 'used': False
             })
         return zones
@@ -179,7 +177,7 @@ def calculate_spawn_zones(rayline_points, num_zones=8):
 
         zones.append({
             'center': (wx, wy),
-            'radius': 6.0,  # Tăng lên 6.0 cho grid 16x16 (world range -8 to +8)
+            'radius': RAY_ZONE_RADIUS,
             'used': False
         })
 
@@ -223,11 +221,11 @@ def is_valid_spawn_position(world_x, world_y, container_cols, container_rows,
     # (4 góc + center) đến rayline, không chỉ top-left corner
 
     # Tính kích thước container trong world space
-    # Công thức: 100 pixels = 2.0 world units → 1 pixel = 0.02 world units
+    # Công thức: 1 pixel = RAY_PIXEL_TO_WORLD world units
     # Container width in screen = cols * CELL_SIZE * 2 + 40
     # Container height in screen = rows * CELL_SIZE
-    container_w_world = (container_cols * CELL_SIZE * 2 + 40) * 0.02
-    container_h_world = (container_rows * CELL_SIZE) * 0.02
+    container_w_world = (container_cols * CELL_SIZE * 2 + 40) * RAY_PIXEL_TO_WORLD
+    container_h_world = (container_rows * CELL_SIZE) * RAY_PIXEL_TO_WORLD
 
     # Các điểm cần kiểm tra (4 góc + center)
     check_points = [
@@ -238,10 +236,10 @@ def is_valid_spawn_position(world_x, world_y, container_cols, container_rows,
         (world_x + container_w_world/2, world_y + container_h_world/2),  # Center
     ]
 
-    # Tất cả các điểm phải cách rayline ít nhất 0.8 unit (giảm từ 2.5)
+    # Tất cả các điểm phải cách rayline ít nhất RAY_MIN_DISTANCE_OLD units
     for px, py in check_points:
         min_dist = calculate_min_distance_to_rayline(px, py, rayline_points)
-        if min_dist < 0.8:
+        if min_dist < RAY_MIN_DISTANCE_OLD:
             return False
 
     # Convert world to screen
@@ -253,13 +251,12 @@ def is_valid_spawn_position(world_x, world_y, container_cols, container_rows,
     container_h = container_rows * CELL_SIZE
 
     # Check 2: Overlap với containers khác trong cùng layer
-    # Thêm buffer 20px để containers cách nhau xa hơn
-    BUFFER = 20
+    # Buffer từ RAY_OLD_BUFFER
     new_rect = {
-        'x': screen_x - BUFFER,
-        'y': screen_y - BUFFER,
-        'w': container_w + BUFFER * 2,
-        'h': container_h + BUFFER * 2
+        'x': screen_x - RAY_OLD_BUFFER,
+        'y': screen_y - RAY_OLD_BUFFER,
+        'w': container_w + RAY_OLD_BUFFER * 2,
+        'h': container_h + RAY_OLD_BUFFER * 2
     }
 
     for ct in existing_containers:
@@ -267,10 +264,10 @@ def is_valid_spawn_position(world_x, world_y, container_cols, container_rows,
             continue
 
         ct_rect = {
-            'x': ct.x - BUFFER,
-            'y': ct.y - BUFFER,
-            'w': ct.cols * CELL_SIZE * 2 + 40 + BUFFER * 2,
-            'h': ct.rows * CELL_SIZE + BUFFER * 2
+            'x': ct.x - RAY_OLD_BUFFER,
+            'y': ct.y - RAY_OLD_BUFFER,
+            'w': ct.cols * CELL_SIZE * 2 + 40 + RAY_OLD_BUFFER * 2,
+            'h': ct.rows * CELL_SIZE + RAY_OLD_BUFFER * 2
         }
 
         if check_rect_overlap(new_rect, ct_rect):
@@ -308,9 +305,9 @@ def find_spawn_position_near_zone(zone, container_cols, container_rows,
         (screen_x, screen_y, world_x, world_y) hoặc None nếu không tìm được
     """
     for _ in range(max_attempts):
-        # Random offset từ center (giảm min radius từ 3.0 xuống 1.5)
+        # Random offset từ center
         angle = random.uniform(0, 2 * math.pi)
-        radius = random.uniform(1.5, zone['radius'])
+        radius = random.uniform(RAY_ZONE_RANDOM_MIN, zone['radius'])
 
         world_x = zone['center'][0] + radius * math.cos(angle)
         world_y = zone['center'][1] + radius * math.sin(angle)
@@ -329,7 +326,7 @@ def find_spawn_position_near_zone(zone, container_cols, container_rows,
 # ============================================
 
 def calculate_sequential_spawn_position(layer_ray_points, spawn_index, container_cols, container_rows,
-                                         existing_containers, current_layer, spacing=2.0):
+                                         existing_containers, current_layer, spacing=None):
     """
     Tính vị trí spawn tuần tự trên ray, cách đều nhau
 
@@ -339,11 +336,13 @@ def calculate_sequential_spawn_position(layer_ray_points, spawn_index, container
         container_cols, container_rows: Kích thước container
         existing_containers: Danh sách containers
         current_layer: Layer hiện tại
-        spacing: Khoảng cách giữa các container (world units), mặc định 2.0
+        spacing: Khoảng cách giữa các container (world units), None = dùng RAY_SPAWN_SPACING
 
     Returns:
         (screen_x, screen_y, world_x, world_y, new_index) hoặc None nếu hết chỗ
     """
+    if spacing is None:
+        spacing = RAY_SPAWN_SPACING
     if not layer_ray_points:
         return None
 
@@ -456,13 +455,12 @@ def is_valid_spawn_on_ray(world_x, world_y, container_cols, container_rows,
     container_h = container_rows * CELL_SIZE
 
     # Check 1: Overlap với containers khác trong cùng layer
-    # GIẢM BUFFER xuống 10px để spawn dễ dàng hơn
-    BUFFER = 10
+    # Buffer từ RAY_SPAWN_BUFFER
     new_rect = {
-        'x': screen_x - BUFFER,
-        'y': screen_y - BUFFER,
-        'w': container_w + BUFFER * 2,
-        'h': container_h + BUFFER * 2
+        'x': screen_x - RAY_SPAWN_BUFFER,
+        'y': screen_y - RAY_SPAWN_BUFFER,
+        'w': container_w + RAY_SPAWN_BUFFER * 2,
+        'h': container_h + RAY_SPAWN_BUFFER * 2
     }
 
     for ct in existing_containers:
@@ -470,10 +468,10 @@ def is_valid_spawn_on_ray(world_x, world_y, container_cols, container_rows,
             continue
 
         ct_rect = {
-            'x': ct.x - BUFFER,
-            'y': ct.y - BUFFER,
-            'w': ct.cols * CELL_SIZE * 2 + 40 + BUFFER * 2,
-            'h': ct.rows * CELL_SIZE + BUFFER * 2
+            'x': ct.x - RAY_SPAWN_BUFFER,
+            'y': ct.y - RAY_SPAWN_BUFFER,
+            'w': ct.cols * CELL_SIZE * 2 + 40 + RAY_SPAWN_BUFFER * 2,
+            'h': ct.rows * CELL_SIZE + RAY_SPAWN_BUFFER * 2
         }
 
         if check_rect_overlap(new_rect, ct_rect):

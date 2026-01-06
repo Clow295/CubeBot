@@ -761,14 +761,15 @@ def spawn_with_layer_ray_constraint(container):
     spawn_index = state.layer_ray_spawn_index.get(state.current_layer, 0)
 
     # Tìm vị trí spawn tuần tự trên ray
+    # Spacing lấy từ RAY_SPAWN_SPACING trong config.py
     result = calculate_sequential_spawn_position(
         current_layer_ray,
         spawn_index,
         container.cols,
         container.rows,
         state.containers,
-        state.current_layer,
-        spacing=2.0  # Cách nhau 2 units
+        state.current_layer
+        # spacing=None sử dụng default RAY_SPAWN_SPACING
     )
 
     if result:
