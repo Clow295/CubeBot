@@ -518,16 +518,14 @@ def sort_grid_data_optimized(rows, cols, data_source):
 
 def sort_grid_data_smart(rows, cols, cells_grid, target_grid):
     """
-    Smart sorting with CLUSTERING PRIORITY - blocks of same color stay together.
+    Smart sorting with SCANLINE FILLING.
 
-    Algorithm:
-    1. Collect all blocks and count each color
-    2. Sort colors by strategic priority (hard-to-place first)
-    3. For each color, find CONTIGUOUS CLUSTER placement
-    4. Use BFS to grow compact clusters
-    5. Avoid matching target colors (priority, not strict requirement)
+    Simple algorithm:
+    1. Find all colors and count them
+    2. Find best color order to minimize conflicts with target
+    3. Fill colors sequentially from top-left to bottom-right (scanline)
 
-    Key improvement: Clusters blocks together instead of rectangle packing
+    This ensures colors are naturally grouped together in continuous blocks.
 
     Args:
         rows, cols: Grid dimensions
@@ -535,59 +533,223 @@ def sort_grid_data_smart(rows, cols, cells_grid, target_grid):
         target_grid: Target grid (to avoid matching)
 
     Returns:
-        2D grid with clustered blocks
+        2D grid with sorted blocks
     """
-    # STEP 1: Collect items
+    # STEP 1: Collect colors and counts
     items = [x for row in cells_grid for x in row if x is not None]
     if not items:
         return cells_grid
 
     counts = {x: items.count(x) for x in set(items)}
 
-    # STEP 2: Sort colors by strategic priority
-    # Priority: Colors with fewer safe placement options go first
-    def get_safe_positions(color):
-        """Count positions where color doesn't match target"""
-        safe = 0
-        for r in range(rows):
+    # STEP 2: Get all positions in ZIGZAG order (alternating direction per row)
+    # This ensures colors flow smoothly between rows without jumping
+    # Example for 3x3:
+    #   1 2 3
+    #   6 5 4  ← reversed
+    #   7 8 9
+    positions = []
+    for r in range(rows):
+        if r % 2 == 0:
+            # Even rows: left to right
             for c in range(cols):
-                if target_grid[r][c] != color:
-                    safe += 1
-        return safe
+                positions.append((r, c))
+        else:
+            # Odd rows: right to left (reversed)
+            for c in range(cols - 1, -1, -1):
+                positions.append((r, c))
 
-    # Sort by: (safe_positions / count) ratio
-    # Low ratio = hard to place safely → do first
-    unique_items = list(set(items))
-    unique_items.sort(key=lambda x: get_safe_positions(x) / max(1, counts[x]))
+    # STEP 3: Find best color order to minimize conflicts
+    best_order = find_best_color_order(counts, positions, target_grid)
 
-    # STEP 3: Cluster-based placement with BFS
+    # STEP 4: Fill colors in scanline order
     new_grid = [[None] * cols for _ in range(rows)]
-    mask = set()
+    pos_idx = 0
 
-    for val in unique_items:
-        cnt = counts[val]
-
-        # Find best CONTIGUOUS CLUSTER for this color
-        best_cluster = find_best_cluster_placement(
-            rows, cols, mask, cnt, val, target_grid
-        )
-
-        # Place blocks in cluster
-        for r, c in best_cluster:
-            new_grid[r][c] = val
-            mask.add((r, c))
+    for color in best_order:
+        color_count = counts[color]
+        for _ in range(color_count):
+            if pos_idx < len(positions):
+                r, c = positions[pos_idx]
+                new_grid[r][c] = color
+                pos_idx += 1
 
     return new_grid
 
 
+def find_best_color_order(counts, positions, target_grid):
+    """
+    Find the best order to fill colors to minimize conflicts with target.
+
+    Strategy:
+    1. Separate colors into EVEN and ODD count groups
+    2. EVEN counts go first (fill rows completely with zigzag)
+    3. ODD counts go last (avoid fragmenting middle rows)
+    4. Within each group, try permutations to minimize conflicts
+
+    If too many colors (>6 total), use greedy approach instead of brute force.
+
+    Args:
+        counts: Dict {color: count}
+        positions: List of (r, c) in zigzag order
+        target_grid: Target grid
+
+    Returns:
+        List of colors in optimal order (even colors first, odd colors last)
+    """
+    from itertools import permutations
+
+    colors = list(counts.keys())
+
+    # Separate into even and odd count groups
+    even_colors = [c for c in colors if counts[c] % 2 == 0]
+    odd_colors = [c for c in colors if counts[c] % 2 == 1]
+
+    # For small number of colors, try all permutations
+    if len(colors) <= 6:
+        best_order = colors
+        best_conflicts = float('inf')
+
+        # Try permutations within each group
+        even_perms = list(permutations(even_colors)) if even_colors else [[]]
+        odd_perms = list(permutations(odd_colors)) if odd_colors else [[]]
+
+        for even_perm in even_perms:
+            for odd_perm in odd_perms:
+                # Combine: even colors first, then odd colors
+                full_order = list(even_perm) + list(odd_perm)
+                conflicts = count_conflicts_for_order(full_order, counts, positions, target_grid)
+
+                if conflicts < best_conflicts:
+                    best_conflicts = conflicts
+                    best_order = full_order
+
+        return best_order
+    else:
+        # For many colors, use greedy approach with even/odd priority
+        return greedy_color_order(counts, positions, target_grid)
+
+
+def count_conflicts_for_order(color_order, counts, positions, target_grid):
+    """
+    Count total conflicts if we fill colors in this order.
+
+    Args:
+        color_order: Tuple/list of colors in order
+        counts: Dict {color: count}
+        positions: List of (r, c) in scanline order
+        target_grid: Target grid
+
+    Returns:
+        Total number of conflicts
+    """
+    conflicts = 0
+    pos_idx = 0
+
+    for color in color_order:
+        color_count = counts[color]
+        for _ in range(color_count):
+            if pos_idx < len(positions):
+                r, c = positions[pos_idx]
+                if target_grid[r][c] == color:
+                    conflicts += 1
+                pos_idx += 1
+
+    return conflicts
+
+
+def greedy_color_order(counts, positions, target_grid):
+    """
+    Greedy approach to find good color order for many colors.
+
+    Strategy:
+    1. Process EVEN count colors first, ODD count colors last
+    2. Within each group, use greedy selection (minimum conflicts)
+    3. This ensures even colors fill complete rows with zigzag pattern
+
+    Args:
+        counts: Dict {color: count}
+        positions: List of (r, c) in zigzag order
+        target_grid: Target grid
+
+    Returns:
+        List of colors in greedy order (even first, odd last)
+    """
+    colors = list(counts.keys())
+
+    # Separate into even and odd count groups
+    even_colors = set(c for c in colors if counts[c] % 2 == 0)
+    odd_colors = set(c for c in colors if counts[c] % 2 == 1)
+
+    order = []
+    pos_idx = 0
+
+    # Process even colors first
+    remaining_colors = even_colors
+    while remaining_colors:
+        best_color = None
+        best_conflicts = float('inf')
+
+        # Try each remaining color
+        for color in remaining_colors:
+            color_count = counts[color]
+            conflicts = 0
+
+            # Count conflicts if we place this color next
+            for i in range(color_count):
+                if pos_idx + i < len(positions):
+                    r, c = positions[pos_idx + i]
+                    if target_grid[r][c] == color:
+                        conflicts += 1
+
+            if conflicts < best_conflicts:
+                best_conflicts = conflicts
+                best_color = color
+
+        # Add best color to order
+        order.append(best_color)
+        remaining_colors.remove(best_color)
+        pos_idx += counts[best_color]
+
+    # Process odd colors last
+    remaining_colors = odd_colors
+    while remaining_colors:
+        best_color = None
+        best_conflicts = float('inf')
+
+        # Try each remaining color
+        for color in remaining_colors:
+            color_count = counts[color]
+            conflicts = 0
+
+            # Count conflicts if we place this color next
+            for i in range(color_count):
+                if pos_idx + i < len(positions):
+                    r, c = positions[pos_idx + i]
+                    if target_grid[r][c] == color:
+                        conflicts += 1
+
+            if conflicts < best_conflicts:
+                best_conflicts = conflicts
+                best_color = color
+
+        # Add best color to order
+        order.append(best_color)
+        remaining_colors.remove(best_color)
+        pos_idx += counts[best_color]
+
+    return order
+
+
 def find_best_cluster_placement(rows, cols, mask, count, color, target_grid):
     """
-    Find best CONTIGUOUS CLUSTER placement for blocks of same color.
+    Find best COMPACT CLUSTER placement for blocks of same color.
 
-    Uses BFS to find compact, contiguous clusters that:
-    1. Are connected (blocks touch each other)
-    2. Minimize conflicts with target
-    3. Have compact shape (low perimeter/area ratio)
+    Uses DISTANCE-BASED CLUSTERING instead of strict adjacency:
+    1. Find best "center point" for the cluster
+    2. Place all blocks in expanding region from center
+    3. Blocks will be NEAR each other (not necessarily touching)
+    4. GUARANTEES all blocks are placed (no blocks lost)
 
     Args:
         rows, cols: Grid dimensions
@@ -599,136 +761,139 @@ def find_best_cluster_placement(rows, cols, mask, count, color, target_grid):
     Returns:
         List of (r, c) positions forming compact cluster
     """
-    # Find all available starting positions
+    # Find all available positions
     all_cells = [(r, c) for r in range(rows) for c in range(cols)]
     available_cells = [pos for pos in all_cells if pos not in mask]
 
     if not available_cells or count == 0:
         return []
 
-    # Try multiple starting positions and pick best cluster
-    best_cluster = []
-    best_score = -999999
+    if len(available_cells) < count:
+        # Not enough space - return what's available
+        return available_cells[:count]
 
-    # Score each starting position
-    start_candidates = []
-    for r, c in available_cells:
-        conflict = 1 if target_grid[r][c] == color else 0
-        neighbors_available = count_available_neighbors(r, c, rows, cols, mask)
-        # Prefer positions with many neighbors and low conflict
-        start_score = neighbors_available * 10 - conflict * 5
-        start_candidates.append((start_score, r, c))
+    # STEP 1: Find best CENTER POINT for the cluster
+    best_center = None
+    best_center_score = -999999
 
-    # Sort and try top candidates
-    start_candidates.sort(reverse=True, key=lambda x: x[0])
-    num_tries = min(len(start_candidates), 10)  # Try top 10
+    for center_r, center_c in available_cells:
+        # Score this center based on:
+        # 1. How many available cells are nearby
+        # 2. How many non-conflict cells are nearby
+        nearby_count = 0
+        nearby_safe = 0
+        max_radius = max(rows, cols)
 
-    for _, start_r, start_c in start_candidates[:num_tries]:
-        # BFS to grow cluster from this start
-        cluster = grow_cluster_bfs(
-            start_r, start_c, count, rows, cols, mask, color, target_grid
-        )
+        for r, c in available_cells:
+            dist = abs(r - center_r) + abs(c - center_c)
+            if dist <= count:  # Within reasonable radius
+                nearby_count += 1
+                if target_grid[r][c] != color:
+                    nearby_safe += 1
 
-        if len(cluster) == count:
-            # Score this cluster
-            score = score_cluster(cluster, color, target_grid)
-            if score > best_score:
-                best_score = score
-                best_cluster = cluster
+        center_score = nearby_safe * 10 + nearby_count
+        if center_score > best_center_score:
+            best_center_score = center_score
+            best_center = (center_r, center_c)
 
-    # Fallback: if no perfect cluster found, use greedy fill
-    if len(best_cluster) < count:
-        best_cluster = greedy_fill_remaining(
-            best_cluster, count, rows, cols, mask, color, target_grid
-        )
+    # STEP 2: Place all blocks in expanding region from center
+    center_r, center_c = best_center
+    cluster = place_blocks_from_center(
+        center_r, center_c, count, rows, cols, mask, color, target_grid
+    )
 
-    # VERIFICATION: Ensure cluster is truly contiguous
-    if best_cluster and not is_cluster_contiguous(best_cluster):
-        # If cluster is fragmented, rebuild it properly
-        best_cluster = force_contiguous_cluster(
-            best_cluster, count, rows, cols, mask, color, target_grid
-        )
-
-    return best_cluster
+    return cluster
 
 
-def is_cluster_contiguous(cluster):
+def place_blocks_from_center(center_r, center_c, count, rows, cols, mask, color, target_grid):
     """
-    Check if cluster is contiguous (all blocks connected).
+    Place blocks in expanding region from center point.
 
-    Returns True if all blocks in cluster are reachable from first block via BFS.
+    Strategy:
+    1. Sort all available cells by distance from center
+    2. Score each cell by: distance + conflict penalty
+    3. Pick top N cells with best scores
+    4. This ensures blocks are GROUPED NEAR CENTER without strict adjacency
+
+    Args:
+        center_r, center_c: Center point
+        count: Number of blocks to place
+        rows, cols: Grid dimensions
+        mask: Occupied positions
+        color: Block color
+        target_grid: Target grid
+
+    Returns:
+        List of (r, c) positions forming compact cluster
     """
-    if not cluster:
-        return True
+    # Collect all available cells with their scores
+    candidates = []
 
+    for r in range(rows):
+        for c in range(cols):
+            if (r, c) not in mask:
+                # Calculate distance from center
+                dist = abs(r - center_r) + abs(c - center_c)
+
+                # Conflict penalty
+                conflict = 1 if target_grid[r][c] == color else 0
+
+                # Score: prefer cells close to center, avoid conflicts
+                # Lower distance = better, no conflict = better
+                score = -dist * 1.0 - conflict * 20.0
+
+                candidates.append((score, r, c))
+
+    # Sort by score (best first)
+    candidates.sort(reverse=True, key=lambda x: x[0])
+
+    # Take top N candidates
+    cluster = []
+    for i in range(min(count, len(candidates))):
+        _, r, c = candidates[i]
+        cluster.append((r, c))
+
+    return cluster
+
+
+def fill_any_remaining(partial_cluster, target_count, rows, cols, mask, color, target_grid):
+    """
+    LAST RESORT: Fill any remaining blocks to ANY available position.
+
+    This ensures NO BLOCKS ARE LOST.
+    Priority: avoid conflicts, but accept them if necessary.
+    """
+    cluster = partial_cluster[:]
     cluster_set = set(cluster)
-    visited = set()
-    queue = [cluster[0]]
-    visited.add(cluster[0])
 
-    while queue:
-        r, c = queue.pop(0)
+    if len(cluster) >= target_count:
+        return cluster
 
-        # Check 4 neighbors
-        for dr, dc in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
-            nr, nc = r + dr, c + dc
-            if (nr, nc) in cluster_set and (nr, nc) not in visited:
-                visited.add((nr, nc))
-                queue.append((nr, nc))
+    # Find all available cells
+    available = []
+    for r in range(rows):
+        for c in range(cols):
+            if (r, c) not in mask and (r, c) not in cluster_set:
+                # Score: prefer non-conflict positions
+                conflict = 1 if target_grid[r][c] == color else 0
+                # Prefer positions closer to existing cluster
+                if cluster:
+                    min_dist = min([abs(r - cr) + abs(c - cc) for cr, cc in cluster])
+                else:
+                    min_dist = 0
+                score = -conflict * 10 - min_dist
+                available.append((score, r, c))
 
-    # Contiguous if all blocks are visited
-    return len(visited) == len(cluster)
+    # Sort by score (best first)
+    available.sort(reverse=True, key=lambda x: x[0])
 
+    # Fill remaining slots
+    remaining = target_count - len(cluster)
+    for i in range(min(remaining, len(available))):
+        _, r, c = available[i]
+        cluster.append((r, c))
 
-def force_contiguous_cluster(fragmented_cluster, target_count, rows, cols, mask, color, target_grid):
-    """
-    Force cluster to be contiguous by keeping only the largest connected component.
-
-    If fragmented_cluster has 2+ separate groups, keep only the largest group
-    and regrow to target_count.
-    """
-    if not fragmented_cluster:
-        return []
-
-    cluster_set = set(fragmented_cluster)
-
-    # Find all connected components using BFS
-    components = []
-    visited_global = set()
-
-    for start_pos in fragmented_cluster:
-        if start_pos in visited_global:
-            continue
-
-        # BFS to find this component
-        component = []
-        queue = [start_pos]
-        visited = set([start_pos])
-
-        while queue:
-            r, c = queue.pop(0)
-            component.append((r, c))
-            visited_global.add((r, c))
-
-            # Check neighbors
-            for dr, dc in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
-                nr, nc = r + dr, c + dc
-                if (nr, nc) in cluster_set and (nr, nc) not in visited:
-                    visited.add((nr, nc))
-                    queue.append((nr, nc))
-
-        components.append(component)
-
-    # Keep largest component
-    largest_component = max(components, key=len) if components else []
-
-    # Regrow to target_count if needed
-    if len(largest_component) < target_count:
-        largest_component = greedy_fill_remaining(
-            largest_component, target_count, rows, cols, mask, color, target_grid
-        )
-
-    return largest_component
+    return cluster
 
 
 def count_available_neighbors(r, c, rows, cols, mask):
