@@ -518,14 +518,16 @@ def sort_grid_data_optimized(rows, cols, data_source):
 
 def sort_grid_data_smart(rows, cols, cells_grid, target_grid):
     """
-    Smart sorting that avoids matching target colors below blocks
-    while maintaining aesthetic compact layout.
+    Smart sorting with CLUSTERING PRIORITY - blocks of same color stay together.
 
     Algorithm:
     1. Collect all blocks and count each color
     2. Sort colors by strategic priority (hard-to-place first)
-    3. For each color, find best placement using conflict scoring
-    4. Avoid placing blocks same color as targets below
+    3. For each color, find CONTIGUOUS CLUSTER placement
+    4. Use BFS to grow compact clusters
+    5. Avoid matching target colors (priority, not strict requirement)
+
+    Key improvement: Clusters blocks together instead of rectangle packing
 
     Args:
         rows, cols: Grid dimensions
@@ -533,7 +535,7 @@ def sort_grid_data_smart(rows, cols, cells_grid, target_grid):
         target_grid: Target grid (to avoid matching)
 
     Returns:
-        2D grid with smart sorted blocks
+        2D grid with clustered blocks
     """
     # STEP 1: Collect items
     items = [x for row in cells_grid for x in row if x is not None]
@@ -556,26 +558,330 @@ def sort_grid_data_smart(rows, cols, cells_grid, target_grid):
     # Sort by: (safe_positions / count) ratio
     # Low ratio = hard to place safely → do first
     unique_items = list(set(items))
-    unique_items.sort(key=lambda x: get_safe_positions(x) / counts[x])
+    unique_items.sort(key=lambda x: get_safe_positions(x) / max(1, counts[x]))
 
-    # STEP 3: Greedy placement with conflict scoring
+    # STEP 3: Cluster-based placement with BFS
     new_grid = [[None] * cols for _ in range(rows)]
     mask = set()
 
     for val in unique_items:
         cnt = counts[val]
 
-        # Find best placement for this color
-        best_placement = find_best_placement_smart(
+        # Find best CONTIGUOUS CLUSTER for this color
+        best_cluster = find_best_cluster_placement(
             rows, cols, mask, cnt, val, target_grid
         )
 
-        # Place blocks
-        for r, c in best_placement:
+        # Place blocks in cluster
+        for r, c in best_cluster:
             new_grid[r][c] = val
             mask.add((r, c))
 
     return new_grid
+
+
+def find_best_cluster_placement(rows, cols, mask, count, color, target_grid):
+    """
+    Find best CONTIGUOUS CLUSTER placement for blocks of same color.
+
+    Uses BFS to find compact, contiguous clusters that:
+    1. Are connected (blocks touch each other)
+    2. Minimize conflicts with target
+    3. Have compact shape (low perimeter/area ratio)
+
+    Args:
+        rows, cols: Grid dimensions
+        mask: Set of occupied (r, c) positions
+        count: Number of blocks to place
+        color: Block color
+        target_grid: Target grid to avoid matching
+
+    Returns:
+        List of (r, c) positions forming compact cluster
+    """
+    # Find all available starting positions
+    all_cells = [(r, c) for r in range(rows) for c in range(cols)]
+    available_cells = [pos for pos in all_cells if pos not in mask]
+
+    if not available_cells or count == 0:
+        return []
+
+    # Try multiple starting positions and pick best cluster
+    best_cluster = []
+    best_score = -999999
+
+    # Score each starting position
+    start_candidates = []
+    for r, c in available_cells:
+        conflict = 1 if target_grid[r][c] == color else 0
+        neighbors_available = count_available_neighbors(r, c, rows, cols, mask)
+        # Prefer positions with many neighbors and low conflict
+        start_score = neighbors_available * 10 - conflict * 5
+        start_candidates.append((start_score, r, c))
+
+    # Sort and try top candidates
+    start_candidates.sort(reverse=True, key=lambda x: x[0])
+    num_tries = min(len(start_candidates), 10)  # Try top 10
+
+    for _, start_r, start_c in start_candidates[:num_tries]:
+        # BFS to grow cluster from this start
+        cluster = grow_cluster_bfs(
+            start_r, start_c, count, rows, cols, mask, color, target_grid
+        )
+
+        if len(cluster) == count:
+            # Score this cluster
+            score = score_cluster(cluster, color, target_grid)
+            if score > best_score:
+                best_score = score
+                best_cluster = cluster
+
+    # Fallback: if no perfect cluster found, use greedy fill
+    if len(best_cluster) < count:
+        best_cluster = greedy_fill_remaining(
+            best_cluster, count, rows, cols, mask, color, target_grid
+        )
+
+    # VERIFICATION: Ensure cluster is truly contiguous
+    if best_cluster and not is_cluster_contiguous(best_cluster):
+        # If cluster is fragmented, rebuild it properly
+        best_cluster = force_contiguous_cluster(
+            best_cluster, count, rows, cols, mask, color, target_grid
+        )
+
+    return best_cluster
+
+
+def is_cluster_contiguous(cluster):
+    """
+    Check if cluster is contiguous (all blocks connected).
+
+    Returns True if all blocks in cluster are reachable from first block via BFS.
+    """
+    if not cluster:
+        return True
+
+    cluster_set = set(cluster)
+    visited = set()
+    queue = [cluster[0]]
+    visited.add(cluster[0])
+
+    while queue:
+        r, c = queue.pop(0)
+
+        # Check 4 neighbors
+        for dr, dc in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
+            nr, nc = r + dr, c + dc
+            if (nr, nc) in cluster_set and (nr, nc) not in visited:
+                visited.add((nr, nc))
+                queue.append((nr, nc))
+
+    # Contiguous if all blocks are visited
+    return len(visited) == len(cluster)
+
+
+def force_contiguous_cluster(fragmented_cluster, target_count, rows, cols, mask, color, target_grid):
+    """
+    Force cluster to be contiguous by keeping only the largest connected component.
+
+    If fragmented_cluster has 2+ separate groups, keep only the largest group
+    and regrow to target_count.
+    """
+    if not fragmented_cluster:
+        return []
+
+    cluster_set = set(fragmented_cluster)
+
+    # Find all connected components using BFS
+    components = []
+    visited_global = set()
+
+    for start_pos in fragmented_cluster:
+        if start_pos in visited_global:
+            continue
+
+        # BFS to find this component
+        component = []
+        queue = [start_pos]
+        visited = set([start_pos])
+
+        while queue:
+            r, c = queue.pop(0)
+            component.append((r, c))
+            visited_global.add((r, c))
+
+            # Check neighbors
+            for dr, dc in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
+                nr, nc = r + dr, c + dc
+                if (nr, nc) in cluster_set and (nr, nc) not in visited:
+                    visited.add((nr, nc))
+                    queue.append((nr, nc))
+
+        components.append(component)
+
+    # Keep largest component
+    largest_component = max(components, key=len) if components else []
+
+    # Regrow to target_count if needed
+    if len(largest_component) < target_count:
+        largest_component = greedy_fill_remaining(
+            largest_component, target_count, rows, cols, mask, color, target_grid
+        )
+
+    return largest_component
+
+
+def count_available_neighbors(r, c, rows, cols, mask):
+    """Count how many neighbors are available (not occupied)"""
+    count = 0
+    for dr, dc in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
+        nr, nc = r + dr, c + dc
+        if 0 <= nr < rows and 0 <= nc < cols and (nr, nc) not in mask:
+            count += 1
+    return count
+
+
+def grow_cluster_bfs(start_r, start_c, target_count, rows, cols, mask, color, target_grid):
+    """
+    Grow a CONTIGUOUS cluster starting from (start_r, start_c) using BFS.
+
+    Prioritizes:
+    1. Positions that don't match target color
+    2. Positions closer to cluster center (compact shape)
+    3. Positions with fewer occupied neighbors (less fragmentation)
+    """
+    cluster = [(start_r, start_c)]
+    cluster_set = {(start_r, start_c)}
+    frontier = []
+
+    # Add initial neighbors to frontier
+    for dr, dc in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
+        nr, nc = start_r + dr, start_c + dc
+        if 0 <= nr < rows and 0 <= nc < cols and (nr, nc) not in mask:
+            # Score this frontier cell
+            conflict = 1 if target_grid[nr][nc] == color else 0
+            distance = abs(nr - start_r) + abs(nc - start_c)
+            score = -conflict * 10 - distance  # Prefer non-conflict, close cells
+            frontier.append((score, nr, nc))
+
+    while len(cluster) < target_count and frontier:
+        # Sort frontier by score (best first)
+        frontier.sort(reverse=True, key=lambda x: x[0])
+
+        # Take best cell from frontier
+        _, r, c = frontier.pop(0)
+
+        # Skip if already in cluster or mask
+        if (r, c) in cluster_set or (r, c) in mask:
+            continue
+
+        # Add to cluster
+        cluster.append((r, c))
+        cluster_set.add((r, c))
+
+        # Add new neighbors to frontier
+        for dr, dc in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
+            nr, nc = r + dr, c + dc
+            if (0 <= nr < rows and 0 <= nc < cols and
+                (nr, nc) not in cluster_set and (nr, nc) not in mask):
+
+                # Check if already in frontier
+                already_in_frontier = any(pos[1] == nr and pos[2] == nc for pos in frontier)
+                if not already_in_frontier:
+                    conflict = 1 if target_grid[nr][nc] == color else 0
+                    distance = abs(nr - start_r) + abs(nc - start_c)
+                    score = -conflict * 10 - distance
+                    frontier.append((score, nr, nc))
+
+    return cluster
+
+
+def score_cluster(cluster, color, target_grid):
+    """
+    Score a cluster placement.
+
+    Higher score = better placement
+
+    Scoring:
+    - Conflict penalty: -10 per block matching target
+    - Compactness bonus: +5 per block (incentivize larger clusters)
+    - Perimeter penalty: -1 per exposed edge (prefer compact shapes)
+    """
+    score = len(cluster) * 5  # Base score
+
+    # Conflict penalty
+    conflicts = sum(1 for r, c in cluster if target_grid[r][c] == color)
+    score -= conflicts * 10
+
+    # Perimeter penalty (exposed edges reduce score)
+    perimeter = 0
+    cluster_set = set(cluster)
+    for r, c in cluster:
+        for dr, dc in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
+            nr, nc = r + dr, c + dc
+            if (nr, nc) not in cluster_set:
+                perimeter += 1
+
+    score -= perimeter  # Penalty for non-compact shapes
+
+    return score
+
+
+def greedy_fill_remaining(partial_cluster, target_count, rows, cols, mask, color, target_grid):
+    """
+    Fill remaining blocks with STRICT CONTIGUOUS requirement.
+
+    Only adds blocks that are ADJACENT to existing cluster.
+    This prevents fragmentation (2 separate groups).
+    """
+    cluster = partial_cluster[:]
+    cluster_set = set(cluster)
+
+    if not cluster:
+        # If no partial cluster, return empty (should not happen)
+        return []
+
+    # Iteratively add adjacent cells until target_count reached
+    while len(cluster) < target_count:
+        # Find all cells adjacent to current cluster
+        adjacent_cells = []
+        for cr, cc in cluster:
+            for dr, dc in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
+                nr, nc = cr + dr, cc + dc
+                if (0 <= nr < rows and 0 <= nc < cols and
+                    (nr, nc) not in cluster_set and (nr, nc) not in mask):
+
+                    # Score this adjacent cell
+                    conflict = 1 if target_grid[nr][nc] == color else 0
+                    # Calculate center distance for compactness
+                    center_r = sum(r for r, c in cluster) / len(cluster)
+                    center_c = sum(c for r, c in cluster) / len(cluster)
+                    dist_to_center = abs(nr - center_r) + abs(nc - center_c)
+
+                    score = -conflict * 10 - dist_to_center
+                    adjacent_cells.append((score, nr, nc))
+
+        if not adjacent_cells:
+            # No more adjacent cells available, return what we have
+            break
+
+        # Remove duplicates (same cell might be adjacent to multiple cluster cells)
+        seen = set()
+        unique_adjacent = []
+        for score, r, c in adjacent_cells:
+            if (r, c) not in seen:
+                seen.add((r, c))
+                unique_adjacent.append((score, r, c))
+
+        # Sort by score and pick best
+        unique_adjacent.sort(reverse=True, key=lambda x: x[0])
+        _, best_r, best_c = unique_adjacent[0]
+
+        # Add to cluster
+        cluster.append((best_r, best_c))
+        cluster_set.add((best_r, best_c))
+
+    return cluster
 
 
 def get_all_blocks(trays):
