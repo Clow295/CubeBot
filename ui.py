@@ -80,6 +80,7 @@ def draw_right_panel(screen):
         (SORT_BTN_RECT, "Sort Blocks", (200, 150, 50)),
         (AUTO_FILL_BTN_RECT, "Auto Fill (Cluster)", (0, 200, 255)),
         (FILL_LAYER_BTN_RECT, "Fill Layers", (255, 100, 200) if any(state.layer_checkbox) else (100, 100, 100)),
+        (FILL_LAYER_ADV_BTN_RECT, "Fill Layer Advance", (255, 150, 0) if any(state.layer_checkbox) else (120, 80, 0)),
         (SHUFFLE_BTN_RECT, "Shuffle", (150, 50, 255)),
         (CLEAR_LEVEL_BTN_RECT, "Clear Level", (200, 50, 50))
     ]

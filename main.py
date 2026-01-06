@@ -141,6 +141,7 @@ while running:
                         state.last_action_message = "Select Trays"
 
                 if FILL_LAYER_BTN_RECT.collidepoint(mx, my): save_undo(); fill_layers()
+                if FILL_LAYER_ADV_BTN_RECT.collidepoint(mx, my): save_undo(); fill_layers_advance()
                 if SHUFFLE_BTN_RECT.collidepoint(mx, my): save_undo(); shuffle_level()
                 if CLEAR_LEVEL_BTN_RECT.collidepoint(mx,
                                                      my): save_undo(); state.containers = []; state.selected_trays = []

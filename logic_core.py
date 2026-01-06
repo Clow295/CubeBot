@@ -874,6 +874,188 @@ def fill_layers():
     fill_clustered_logic(targets, demand)
 
 
+def fill_layers_advance():
+    """
+    Advanced Fill Layer with smart fallback strategies.
+
+    Goals:
+    1. Fill all empty cells (NO empty cells allowed)
+    2. Avoid color matching target (priority)
+    3. Cluster colors together (priority)
+    4. Fallback: fill even if matching target to avoid empty cells
+
+    Algorithm:
+    - Phase 1: Analyze demand and available slots
+    - Phase 2: Fill with non-matching colors (clustering)
+    - Phase 3: Force fill remaining empty slots (even if matching target)
+    """
+    # Get target layers
+    tls = [i + 1 for i, c in enumerate(state.layer_checkbox) if c]
+    if not tls:
+        tls = [state.current_layer]
+    targets = [c for c in state.containers if c.layer in tls]
+    if not targets:
+        return
+
+    # Initialize cells for all targets
+    for ct in targets:
+        if not ct.cells:
+            ct.cells = [[None] * ct.cols for _ in range(ct.rows)]
+
+    # Count demand: how many of each color we need
+    l_tc = {}  # Local target counts
+    for c in targets:
+        for row in c.target:
+            for val in row:
+                l_tc[val] = l_tc.get(val, 0) + 1
+
+    # Get global stats
+    tc, bc = global_stats()
+
+    # Calculate demand with room available
+    limit = min(state.tray_color_variety, len(COLORS))
+    demand = {}
+    for c, amt in l_tc.items():
+        if c < limit:
+            room = tc.get(c, 0) - bc.get(c, 0)
+            if room > 0:
+                demand[c] = min(amt, room)
+
+    # PHASE 1 & 2: Fill with clustering (avoid matching target)
+    filled_phase1 = 0
+    for col, cnt in sorted(demand.items(), key=lambda x: x[1], reverse=True):
+        for _ in range(cnt):
+            slot = find_best_slot_for_clustering(targets, col)
+            if slot:
+                slot[0].cells[slot[1]][slot[2]] = col
+                filled_phase1 += 1
+
+    # PHASE 3: Find all remaining empty slots
+    empty_slots = []
+    for ct in targets:
+        for r in range(ct.rows):
+            for c in range(ct.cols):
+                if ct.cells[r][c] is None:
+                    empty_slots.append((ct, r, c))
+
+    if not empty_slots:
+        state.last_action_message = f"Fill Advance: {filled_phase1} filled (complete)"
+        return
+
+    # PHASE 4: Smart fallback - fill empty slots with best available colors
+    filled_phase2 = 0
+
+    # Strategy: Try to fill with non-matching colors first, then allow matching
+    for priority in ['non_matching_cluster', 'non_matching_free', 'matching_cluster', 'matching_any']:
+        if not empty_slots:
+            break
+
+        slots_to_remove = []
+
+        for slot_idx, (ct, r, c) in enumerate(empty_slots):
+            target_color = ct.target[r][c]
+
+            # Find best color for this slot based on priority
+            best_color = find_best_color_for_slot(ct, r, c, target_color, priority, limit)
+
+            if best_color is not None:
+                ct.cells[r][c] = best_color
+                filled_phase2 += 1
+                slots_to_remove.append(slot_idx)
+
+        # Remove filled slots
+        for idx in reversed(slots_to_remove):
+            empty_slots.pop(idx)
+
+    # PHASE 5: Last resort - fill any remaining empty with least used color
+    if empty_slots:
+        # Count current block usage
+        color_usage = {}
+        for ct in targets:
+            for row in ct.cells:
+                for val in row:
+                    if val is not None:
+                        color_usage[val] = color_usage.get(val, 0) + 1
+
+        for ct, r, c in empty_slots:
+            # Find least used color
+            available_colors = range(limit)
+            least_used_color = min(available_colors, key=lambda col: color_usage.get(col, 0))
+            ct.cells[r][c] = least_used_color
+            color_usage[least_used_color] = color_usage.get(least_used_color, 0) + 1
+            filled_phase2 += 1
+
+    total_filled = filled_phase1 + filled_phase2
+    state.last_action_message = f"Fill Advance: {total_filled} filled ({filled_phase1} ideal + {filled_phase2} fallback)"
+
+
+def find_best_color_for_slot(ct, r, c, target_color, priority, limit):
+    """
+    Find best color for a specific slot based on priority strategy.
+
+    Args:
+        ct: Container
+        r, c: Row and column of slot
+        target_color: Target color at this slot
+        priority: Strategy priority ('non_matching_cluster', 'non_matching_free', 'matching_cluster', 'matching_any')
+        limit: Color variety limit
+
+    Returns:
+        Color index or None
+    """
+    # Get current blocks in container
+    current_blocks = [x for row in ct.cells for x in row if x is not None]
+    unique_colors = set(current_blocks)
+
+    # Get available colors
+    available_colors = []
+    for col in range(limit):
+        # Check max_same_color constraint
+        if current_blocks.count(col) >= state.max_same_color:
+            continue
+        # Check max_types constraint
+        if col not in unique_colors and len(unique_colors) >= ct.max_types:
+            continue
+        available_colors.append(col)
+
+    if not available_colors:
+        return None
+
+    # Check adjacency for clustering
+    def has_adjacent_color(color):
+        for dr, dc in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
+            nr, nc = r + dr, c + dc
+            if 0 <= nr < ct.rows and 0 <= nc < ct.cols and ct.cells[nr][nc] == color:
+                return True
+        return False
+
+    # Strategy: non_matching_cluster
+    if priority == 'non_matching_cluster':
+        candidates = [col for col in available_colors if col != target_color and has_adjacent_color(col)]
+        if candidates:
+            return random.choice(candidates)
+
+    # Strategy: non_matching_free
+    elif priority == 'non_matching_free':
+        candidates = [col for col in available_colors if col != target_color]
+        if candidates:
+            # Prefer colors with lower count for balance
+            return min(candidates, key=lambda col: current_blocks.count(col))
+
+    # Strategy: matching_cluster
+    elif priority == 'matching_cluster':
+        if target_color in available_colors and has_adjacent_color(target_color):
+            return target_color
+
+    # Strategy: matching_any
+    elif priority == 'matching_any':
+        # Allow any color including matching target
+        if available_colors:
+            return min(available_colors, key=lambda col: current_blocks.count(col))
+
+    return None
+
+
 def fill_same():
     """
     Reset cells to match targets (like reset button).
