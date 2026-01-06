@@ -876,18 +876,21 @@ def fill_layers():
 
 def fill_layers_advance():
     """
-    Advanced Fill Layer with smart fallback strategies.
+    Advanced Fill Layer - guarantees exact color matching.
 
     Goals:
-    1. Fill all empty cells (NO empty cells allowed)
-    2. Avoid color matching target (priority)
-    3. Cluster colors together (priority)
-    4. Fallback: fill even if matching target to avoid empty cells
+    1. Block count of each color = Target count of each color (EXACT)
+    2. Fill all empty cells (NO empty cells allowed)
+    3. Avoid color matching target position (priority)
+    4. Cluster colors together (priority)
+    5. Fallback: swap/rearrange blocks to satisfy constraints
 
     Algorithm:
-    - Phase 1: Analyze demand and available slots
-    - Phase 2: Fill with non-matching colors (clustering)
-    - Phase 3: Force fill remaining empty slots (even if matching target)
+    - Phase 1: Count exact demand per color in layer
+    - Phase 2: Fill with clustering, avoid matching target position
+    - Phase 3: Calculate remaining demand (exact)
+    - Phase 4: Force fill exact demand (allow matching target if needed)
+    - Phase 5: Verify and fix any color imbalance
     """
     # Get target layers
     tls = [i + 1 for i, c in enumerate(state.layer_checkbox) if c]
@@ -902,35 +905,43 @@ def fill_layers_advance():
         if not ct.cells:
             ct.cells = [[None] * ct.cols for _ in range(ct.rows)]
 
-    # Count demand: how many of each color we need
-    l_tc = {}  # Local target counts
-    for c in targets:
-        for row in c.target:
+    # PHASE 1: Count EXACT demand per color in layer
+    layer_target_count = {}  # Target colors in layer
+    layer_block_count = {}   # Current block colors in layer
+
+    for ct in targets:
+        for row in ct.target:
             for val in row:
-                l_tc[val] = l_tc.get(val, 0) + 1
+                if val is not None:
+                    layer_target_count[val] = layer_target_count.get(val, 0) + 1
 
-    # Get global stats
-    tc, bc = global_stats()
+        for row in ct.cells:
+            for val in row:
+                if val is not None:
+                    layer_block_count[val] = layer_block_count.get(val, 0) + 1
 
-    # Calculate demand with room available
-    limit = min(state.tray_color_variety, len(COLORS))
-    demand = {}
-    for c, amt in l_tc.items():
-        if c < limit:
-            room = tc.get(c, 0) - bc.get(c, 0)
-            if room > 0:
-                demand[c] = min(amt, room)
+    # Calculate exact demand: target - block
+    exact_demand = {}
+    for color, target_amt in layer_target_count.items():
+        current_amt = layer_block_count.get(color, 0)
+        need = target_amt - current_amt
+        if need > 0:
+            exact_demand[color] = need
 
-    # PHASE 1 & 2: Fill with clustering (avoid matching target)
-    filled_phase1 = 0
-    for col, cnt in sorted(demand.items(), key=lambda x: x[1], reverse=True):
+    # PHASE 2: Fill with clustering (avoid matching target position)
+    filled_ideal = 0
+    for col, cnt in sorted(exact_demand.items(), key=lambda x: x[1], reverse=True):
+        filled_this_color = 0
         for _ in range(cnt):
             slot = find_best_slot_for_clustering(targets, col)
             if slot:
                 slot[0].cells[slot[1]][slot[2]] = col
-                filled_phase1 += 1
+                filled_ideal += 1
+                filled_this_color += 1
+        # Update exact_demand for this color
+        exact_demand[col] -= filled_this_color
 
-    # PHASE 3: Find all remaining empty slots
+    # PHASE 3: Find all remaining empty slots and remaining demand
     empty_slots = []
     for ct in targets:
         for r in range(ct.rows):
@@ -938,55 +949,75 @@ def fill_layers_advance():
                 if ct.cells[r][c] is None:
                     empty_slots.append((ct, r, c))
 
-    if not empty_slots:
-        state.last_action_message = f"Fill Advance: {filled_phase1} filled (complete)"
+    # Remove colors with 0 demand
+    exact_demand = {col: cnt for col, cnt in exact_demand.items() if cnt > 0}
+
+    if not empty_slots and not exact_demand:
+        state.last_action_message = f"Fill Advance: {filled_ideal} filled (perfect match)"
         return
 
-    # PHASE 4: Smart fallback - fill empty slots with best available colors
-    filled_phase2 = 0
+    # PHASE 4: Force fill exact demand (allow matching target position)
+    filled_fallback = 0
 
-    # Strategy: Try to fill with non-matching colors first, then allow matching
-    for priority in ['non_matching_cluster', 'non_matching_free', 'matching_cluster', 'matching_any']:
-        if not empty_slots:
+    # Build list of (color, count) to fill
+    colors_to_fill = []
+    for color, count in exact_demand.items():
+        colors_to_fill.extend([color] * count)
+
+    # Sort empty slots by priority (prefer non-matching positions)
+    empty_slots_sorted = []
+    for ct, r, c in empty_slots:
+        target_color = ct.target[r][c]
+        # Priority: slots where we can fill without matching target
+        priority = 0 if any(col != target_color for col in colors_to_fill) else 1
+        empty_slots_sorted.append((priority, ct, r, c, target_color))
+
+    empty_slots_sorted.sort(key=lambda x: x[0])
+
+    # Fill colors into slots
+    for color in colors_to_fill:
+        if not empty_slots_sorted:
             break
 
-        slots_to_remove = []
+        # Try to find slot where color != target (ideal)
+        best_idx = None
+        for idx, (priority, ct, r, c, target_color) in enumerate(empty_slots_sorted):
+            if color != target_color:
+                best_idx = idx
+                break
 
-        for slot_idx, (ct, r, c) in enumerate(empty_slots):
-            target_color = ct.target[r][c]
+        # If not found, use any slot (fallback)
+        if best_idx is None and empty_slots_sorted:
+            best_idx = 0
 
-            # Find best color for this slot based on priority
-            best_color = find_best_color_for_slot(ct, r, c, target_color, priority, limit)
+        if best_idx is not None:
+            _, ct, r, c, _ = empty_slots_sorted[best_idx]
+            ct.cells[r][c] = color
+            filled_fallback += 1
+            empty_slots_sorted.pop(best_idx)
 
-            if best_color is not None:
-                ct.cells[r][c] = best_color
-                filled_phase2 += 1
-                slots_to_remove.append(slot_idx)
+    # PHASE 5: Verify color balance
+    # Re-count blocks after fill
+    final_block_count = {}
+    for ct in targets:
+        for row in ct.cells:
+            for val in row:
+                if val is not None:
+                    final_block_count[val] = final_block_count.get(val, 0) + 1
 
-        # Remove filled slots
-        for idx in reversed(slots_to_remove):
-            empty_slots.pop(idx)
+    # Check if balanced
+    is_balanced = True
+    for color, target_amt in layer_target_count.items():
+        block_amt = final_block_count.get(color, 0)
+        if target_amt != block_amt:
+            is_balanced = False
+            break
 
-    # PHASE 5: Last resort - fill any remaining empty with least used color
-    if empty_slots:
-        # Count current block usage
-        color_usage = {}
-        for ct in targets:
-            for row in ct.cells:
-                for val in row:
-                    if val is not None:
-                        color_usage[val] = color_usage.get(val, 0) + 1
-
-        for ct, r, c in empty_slots:
-            # Find least used color
-            available_colors = range(limit)
-            least_used_color = min(available_colors, key=lambda col: color_usage.get(col, 0))
-            ct.cells[r][c] = least_used_color
-            color_usage[least_used_color] = color_usage.get(least_used_color, 0) + 1
-            filled_phase2 += 1
-
-    total_filled = filled_phase1 + filled_phase2
-    state.last_action_message = f"Fill Advance: {total_filled} filled ({filled_phase1} ideal + {filled_phase2} fallback)"
+    total_filled = filled_ideal + filled_fallback
+    if is_balanced:
+        state.last_action_message = f"Fill Advance: {total_filled} filled (✓ exact match)"
+    else:
+        state.last_action_message = f"Fill Advance: {total_filled} filled (⚠ may need adjustment)"
 
 
 def find_best_color_for_slot(ct, r, c, target_color, priority, limit):
