@@ -336,8 +336,9 @@ def draw_rayline_grid(screen):
 
 def draw_rayline_path(screen):
     """Vẽ ray path của layer đang edit"""
-    # Vẽ temp drawing nếu đang vẽ, nếu không vẽ saved ray của layer
-    if state.rayline_is_drawing and state.rayline_temp_drawing:
+    # Ưu tiên vẽ temp drawing nếu có (dù đang vẽ hay đã thả chuột)
+    # Chỉ vẽ saved ray khi temp drawing rỗng
+    if state.rayline_temp_drawing:
         points_to_draw = state.rayline_temp_drawing
     else:
         points_to_draw = state.layer_rays.get(state.rayline_edit_layer, [])
